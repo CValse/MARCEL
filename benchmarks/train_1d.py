@@ -20,6 +20,24 @@ from utils.early_stopping import EarlyStopping, generate_checkpoint_filename
 from models.model_1d import LSTM, Transformer
 from models.models_1d.utils import construct_fingerprint, construct_smiles, concatenate_smiles
 
+###################################################
+import os
+#os.environ['CUDA_VISIBLE_DEVICES'] = gpus
+torch.cuda.empty_cache()
+#print(os.environ['CUDA_VISIBLE_DEVICES'])
+
+seed = 42
+torch.manual_seed(seed)
+
+# If you are using a GPU, you should also set the seed for CUDA operations
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+np.random.seed(seed)
+################################################## 
+
 
 class Molecules(Dataset):
     def __init__(self, smiles_ids, attention_masks, labels, fingerprint=None, input_type='smiles'):
@@ -89,115 +107,174 @@ def eval(loader):
         num_samples += len(y)
     return error / num_samples
 
+@torch.no_grad()
+def eval_r2(loader):
+    import numpy as np
+    model.eval()
+    ss_res = 0.0
+    ss_tot = 0.0
+    total_y = []
+    total_out = []
+    for batch in loader:
+        batch = tuple(t.to(device) for t in batch)
+        if config.model1d.input_type == 'SMILES':
+            input_ids, attention_mask, y = batch
+            if isinstance(model, Transformer):
+                out = model(input_ids, attention_mask)
+            else:
+                out = model(input_ids)
+        else:
+            fingerprints, y = batch
+            out = model(fingerprints)
+        out = out.squeeze()
+        total_y.extend(y.cpu().numpy())
+        total_out.extend(out.cpu().numpy())
+    
+    y_mean = np.mean(total_y)
+    ss_res = np.sum((np.array(total_out) - np.array(total_y))**2)
+    ss_tot = np.sum((np.array(total_y) - y_mean)**2)
+    
+    r2_score = 1 - (ss_res/ss_tot)
+    return r2_score
 
 if __name__ == '__main__':
-    writer = SummaryWriter()
-    loader = ConfigLoader(model=Config, config='params/params_1d.json')
-    config = loader()
+    
+    res_dict = dict()
+    for dataname in ['BDE','Drugs','Kraken']:
+        res_dict[dataname]=dict()
+        for algo in ['LSTM','Transformer']:
+            res_dict[dataname][algo]=dict()
 
-    variable_name = None
-    unique_variables = 1
-    if config.dataset == 'Drugs':
-        dataset = Drugs('datasets/Drugs', max_num_conformers=config.max_num_conformers).shuffle()
-    elif config.dataset == 'Kraken':
-        dataset = Kraken('datasets/Kraken', max_num_conformers=config.max_num_conformers).shuffle()
-    elif config.dataset == 'BDE':
-        dataset = BDE('datasets/BDE').shuffle()
-        variable_name = 'is_ligand'
-        unique_variables = 2
-    elif config.dataset == 'EE':
-        dataset = EE('datasets/EE', max_num_conformers=config.max_num_conformers).shuffle()
-        variable_name = 'config_id'
-        unique_variables = 2
+            writer = SummaryWriter()
+            loader = ConfigLoader(model=Config, config='params/params_1d.json')
+            config = loader()
 
-    target_id = dataset.descriptors.index(config.target)
-    labels = dataset.y[:, target_id]
-    mean = labels.mean(dim=0).item()
-    std = labels.std(dim=0).item()
-    labels = (labels - mean) / std
+            variable_name = None
+            unique_variables = 1
+            if config.dataset == 'Drugs':
+                dataset = Drugs('datasets/Drugs', max_num_conformers=config.max_num_conformers).shuffle()
+            elif config.dataset == 'Kraken':
+                dataset = Kraken('datasets/Kraken', max_num_conformers=config.max_num_conformers).shuffle()
+            elif config.dataset == 'BDE':
+                dataset = BDE('datasets/BDE').shuffle()
+                variable_name = 'is_ligand'
+                unique_variables = 2
+            elif config.dataset == 'EE':
+                dataset = EE('datasets/EE', max_num_conformers=config.max_num_conformers).shuffle()
+                variable_name = 'config_id'
+                unique_variables = 2
+                
+            for d in dataset.descriptors:
+                res_dict[dataname][algo][d]=dict()
+                res_dict[dataname][algo][d]['loss'] = []
+                res_dict[dataname][algo][d]['valid_error'] = []
+                res_dict[dataname][algo][d]['test_error'] = []
+                config.target=d
 
-    if variable_name is not None:
-        smiles = concatenate_smiles(dataset, variable_name)
-    else:
-        smiles = construct_smiles(dataset)
-    fingerprint = construct_fingerprint(smiles) if config.model1d.input_type == 'Fingerprint' else None
 
-    tokenizer = RobertaTokenizer.from_pretrained('seyonec/PubChem10M_SMILES_BPE_450k')
-    dicts = tokenizer(smiles, return_tensors='pt', padding='longest')
-    smiles_ids, attention_masks = dicts['input_ids'], dicts['attention_mask']
-    vocab_size = tokenizer.vocab_size if config.model1d.input_type == 'SMILES' else fingerprint.shape[1]
+                target_id = dataset.descriptors.index(config.target)
+                labels = dataset.y[:, target_id]
+                mean = labels.mean(dim=0).item()
+                std = labels.std(dim=0).item()
+                labels = (labels - mean) / std
 
-    device = torch.device(config.device)
-    dataset = Molecules(smiles_ids, attention_masks, labels, fingerprint, input_type=config.model1d.input_type)
+                if variable_name is not None:
+                    smiles = concatenate_smiles(dataset, variable_name)
+                else:
+                    smiles = construct_smiles(dataset)
+                fingerprint = construct_fingerprint(smiles) if config.model1d.input_type == 'Fingerprint' else None
 
-    if config.model1d.model == 'LSTM':
-        model = LSTM(
-            vocab_size, config.hidden_dim, config.hidden_dim, 1,
-            config.model1d.num_layers, config.dropout, padding_idx=tokenizer.pad_token_id)
-    elif config.model1d.model == 'Transformer':
-        model = Transformer(
-            vocab_size, config.model1d.embedding_dim, smiles_ids.shape[1],
-            config.model1d.num_heads, config.hidden_dim, 1,
-            config.model1d.num_layers, config.dropout, padding_idx=tokenizer.pad_token_id)
-    model = model.to(device)
+                tokenizer = RobertaTokenizer.from_pretrained('seyonec/PubChem10M_SMILES_BPE_450k')
+                dicts = tokenizer(smiles, return_tensors='pt', padding='longest')
+                smiles_ids, attention_masks = dicts['input_ids'], dicts['attention_mask']
+                vocab_size = tokenizer.vocab_size if config.model1d.input_type == 'SMILES' else fingerprint.shape[1]
 
-    train_ratio = config.train_ratio
-    valid_ratio = config.valid_ratio
-    test_ratio = 1 - train_ratio - valid_ratio
+                device = torch.device(config.device)
+                dataset = Molecules(smiles_ids, attention_masks, labels, fingerprint, input_type=config.model1d.input_type)
 
-    train_len = int(train_ratio * len(dataset))
-    valid_len = int(valid_ratio * len(dataset))
-    test_len = len(dataset) - train_len - valid_len
+                if config.model1d.model == 'LSTM':
+                    model = LSTM(
+                        vocab_size, config.hidden_dim, config.hidden_dim, 1,
+                        config.model1d.num_layers, config.dropout, padding_idx=tokenizer.pad_token_id)
+                elif config.model1d.model == 'Transformer':
+                    model = Transformer(
+                        vocab_size, config.model1d.embedding_dim, smiles_ids.shape[1],
+                        config.model1d.num_heads, config.hidden_dim, 1,
+                        config.model1d.num_layers, config.dropout, padding_idx=tokenizer.pad_token_id)
+                model = model.to(device)
 
-    train_dataset, valid_dataset, test_dataset = random_split(dataset, lengths=[train_len, valid_len, test_len])
-    train_loader = DataLoader(train_dataset, batch_size=config.batch_size)
-    valid_loader = DataLoader(valid_dataset, batch_size=config.batch_size)
-    test_loader = DataLoader(test_dataset, batch_size=config.batch_size)
+                train_ratio = config.train_ratio
+                valid_ratio = config.valid_ratio
+                test_ratio = 1 - train_ratio - valid_ratio
 
-    checkpoint_path = generate_checkpoint_filename()
-    early_stopping = EarlyStopping(patience=config.patience, path=checkpoint_path)
-    print(f'Checkpoint path: {checkpoint_path}')
+                train_len = int(train_ratio * len(dataset))
+                valid_len = int(valid_ratio * len(dataset))
+                test_len = len(dataset) - train_len - valid_len
 
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
-    if config.scheduler == 'ReduceLROnPlateau':
-        scheduler = ReduceLROnPlateau(
-            optimizer, verbose=True, **asdict(config.reduce_lr_on_plateau))
-    elif config.scheduler == 'CosineAnnealingLR':
-        scheduler = CosineAnnealingLR(
-            optimizer, T_max=config.num_epochs, verbose=True, **asdict(config.cosine_annealing_lr))
-    elif config.scheduler == 'LinearWarmupCosineAnnealingLR':
-        scheduler = LinearWarmupCosineAnnealingLR(
-            optimizer, **asdict(config.linear_warmup_cosine_annealing_lr))
-    else:
-        scheduler = None
+                train_dataset, valid_dataset, test_dataset = random_split(dataset, lengths=[train_len, valid_len, test_len])
+                train_loader = DataLoader(train_dataset, batch_size=config.batch_size)
+                valid_loader = DataLoader(valid_dataset, batch_size=config.batch_size)
+                test_loader = DataLoader(test_dataset, batch_size=config.batch_size)
 
-    best_val_error = None
-    for epoch in range(config.num_epochs):
-        loss = train(train_loader)
-        if scheduler is not None:
-            scheduler.step(loss)
-        valid_error = eval(valid_loader)
+                checkpoint_path = generate_checkpoint_filename()
+                early_stopping = EarlyStopping(patience=config.patience, path=checkpoint_path)
+                print(f'Checkpoint path: {checkpoint_path}')
 
-        early_stopping(valid_error, model)
-        if early_stopping.counter == 0:
-            test_error = eval(test_loader)
-        if early_stopping.early_stop:
-            print('Early stopping...')
-            break
+                optimizer = torch.optim.Adam(
+                    model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+                if config.scheduler == 'ReduceLROnPlateau':
+                    scheduler = ReduceLROnPlateau(
+                        optimizer, verbose=True, **asdict(config.reduce_lr_on_plateau))
+                elif config.scheduler == 'CosineAnnealingLR':
+                    scheduler = CosineAnnealingLR(
+                        optimizer, T_max=config.num_epochs, verbose=True, **asdict(config.cosine_annealing_lr))
+                elif config.scheduler == 'LinearWarmupCosineAnnealingLR':
+                    scheduler = LinearWarmupCosineAnnealingLR(
+                        optimizer, **asdict(config.linear_warmup_cosine_annealing_lr))
+                else:
+                    scheduler = None
 
-        writer.add_scalar(f'Loss_{config.model1d.model}/{config.model1d.input_type}'
-                          f'/{config.dataset}/{config.target}/train', loss, epoch)
-        writer.add_scalar(f'Loss_{config.model1d.model}/{config.model1d.input_type}'
-                          f'/{config.dataset}/{config.target}/valid', valid_error, epoch)
-        writer.add_scalar(f'Loss_{config.model1d.model}/{config.model1d.input_type}'
-                          f'/{config.dataset}/{config.target}/test', test_error, epoch)
-        print(f'Progress: {epoch}/{config.num_epochs}/{loss:.5f}/{valid_error:.5f}/{test_error:.5f}')
+                best_val_error = None
+                for epoch in range(config.num_epochs):
+                    loss = train(train_loader)
+                    if scheduler is not None:
+                        scheduler.step(loss)
+                    valid_error = eval(valid_loader)
 
-    model.load_state_dict(torch.load(checkpoint_path))
-    test_error = eval(test_loader)
-    print(f'Best validation error: {-early_stopping.best_score:.7f}')
-    print(f'Test error: {test_error:.7f}')
+                    early_stopping(valid_error, model)
+                    if early_stopping.counter == 0:
+                        test_error = eval(test_loader)
+                    if early_stopping.early_stop:
+                        print('Early stopping...')
+                        break
 
-    os.remove(checkpoint_path)
-    writer.close()
+                    writer.add_scalar(f'Loss_{config.model1d.model}/{config.model1d.input_type}'
+                                      f'/{config.dataset}/{config.target}/train', loss, epoch)
+                    writer.add_scalar(f'Loss_{config.model1d.model}/{config.model1d.input_type}'
+                                      f'/{config.dataset}/{config.target}/valid', valid_error, epoch)
+                    writer.add_scalar(f'Loss_{config.model1d.model}/{config.model1d.input_type}'
+                                      f'/{config.dataset}/{config.target}/test', test_error, epoch)
+                    print(f'Progress: {epoch}/{config.num_epochs}/{loss:.5f}/{valid_error:.5f}/{test_error:.5f}')
+                    res_dict[dataname][algo][d]['loss'].append(loss)
+                    res_dict[dataname][algo][d]['valid_error'].append(valid_error)
+                    res_dict[dataname][algo][d]['test_error'].append(test_error)
+
+                model.load_state_dict(torch.load(checkpoint_path))
+                test_error = eval(test_loader)
+                test_r2 = eval_r2(test_loader)
+                print(f'Best validation error: {-early_stopping.best_score:.7f}')
+                print(f'Test error: {test_error:.7f}')
+                print(f'Test r2: {test_r2:.7f}')
+
+                res_dict[dataname][algo][d]['Test error'] = test_error
+                res_dict[dataname][algo][d]['Test r2'] = test_r2
+                res_dict[dataname][algo][d]['checkpoint']=checkpoint_path
+
+
+                #os.remove(checkpoint_path)
+                writer.close()
+
+            import pickle
+            with open("res_dict_1d.pkl", "wb") as f:
+                pickle.dump(res_dict, f)
+
