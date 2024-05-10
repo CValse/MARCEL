@@ -1,0 +1,2 @@
+epoch,step,train_epoch_loss,train_epoch_r2,train_epoch_time,val_epoch_loss,val_epoch_r2,val_epoch_time
+0.0,16,4096.3876953125,-1112963.0,2.7123374938964844,36.1115837097168,-7252.51123046875,0.33432555198669434
