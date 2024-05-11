@@ -129,3 +129,37 @@ def mol_to_data_obj(mol):
     data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, pos=pos)
 
     return data
+
+def mol_to_mc(mol):
+    # atoms
+    atom_features_list = []
+    for atom in mol.GetAtoms():
+        atom_features_list.append(atom_to_feature_vector(atom))
+    x = torch.tensor(np.asarray(atom_features_list), dtype=torch.long)
+
+    # bonds
+    if len(mol.GetBonds()) <= 0:
+        num_bond_features = 2
+        edge_index = torch.empty((2, 0), dtype=torch.long)
+        edge_attr = torch.empty((0, num_bond_features), dtype=torch.long)
+    else:
+        edge_index = []
+        edge_attr = []
+        for bond in mol.GetBonds():
+            i = bond.GetBeginAtomIdx()
+            j = bond.GetEndAtomIdx()
+            edge_index.append([i, j])
+            edge_index.append([j, i])
+            edge_feature = bond_to_feature_vector(bond)
+            edge_attr.append(edge_feature)
+            edge_attr.append(edge_feature)
+        edge_index = torch.tensor(np.asarray(edge_index), dtype=torch.long).t().contiguous()
+        edge_attr = torch.tensor(np.asarray(edge_attr), dtype=torch.long)
+
+    # coordinates
+    pos = mol.GetConformer().GetPositions()
+    pos = torch.from_numpy(pos).float()
+
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, pos=pos)
+
+    return data

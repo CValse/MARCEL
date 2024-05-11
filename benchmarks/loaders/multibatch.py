@@ -2,8 +2,8 @@ from torch_geometric.loader import DataLoader
 
 
 class MultiBatchLoader(DataLoader):
-    def __init__(self, dataset, batch_sampler):
-        super(MultiBatchLoader, self).__init__(dataset, batch_sampler=batch_sampler)
+    def __init__(self, dataset, batch_sampler, **kwargs):
+        super(MultiBatchLoader, self).__init__(dataset, batch_sampler=batch_sampler, **kwargs)
 
     def __iter__(self):
         for multi_indices in self.batch_sampler:
