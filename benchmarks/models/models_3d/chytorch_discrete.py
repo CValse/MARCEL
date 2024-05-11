@@ -78,7 +78,8 @@ class ChytorchDiscrete(Module):
         self._register_load_state_dict_pre_hook(_update)
     
     def forward(self, 
-        z: Tensor, 
+        z: Tensor,
+        hgs: Tensor
         pos: Tensor,
         batch: Tensor = None):
         assert z.dim() == 1 and z.dtype == long
@@ -92,37 +93,23 @@ class ChytorchDiscrete(Module):
         Distances should be coded from 2 (means self-loop) to max_distance + 2.
         Non-reachable atoms should be coded by 1.
         """
+        z = z+2
+        hgs = hgs +2
         #cache = repeat(None) if cache is None else iter(cache)
         batch = zeros_like(z) if batch is None else batch
         
-        #############################
-        # Identify non-hydrogen atoms
-        non_hydrogen_indices = torch.where(z != 0)[0]
-        # Prune tensors
-        pruned_batch = batch[non_hydrogen_indices]
-        pruned_z = z[non_hydrogen_indices]
-        pruned_pos = pos[non_hydrogen_indices]
-        
-        N = max(pruned_batch.bincount())
-        num_batches = max(pruned_batch)+1
+        N = max(batch.bincount())
+        num_batches = max(batch)+1
         batched_z = t_zeros(num_batches, N, dtype=t_int32, device=z.device)
         batched_hgs = t_zeros(num_batches, N, dtype=t_int32, device=z.device)
         batched_dist = t_zeros(num_batches, N, N, device=z.device)
         
         # Populate the batched_tensor
         for i in range(num_batches):
-            indices_h = (batch == i).nonzero(as_tuple=True)[0]
-            indices = (pruned_batch == i).nonzero(as_tuple=True)[0]
-            batched_z[i, :len(indices)] = pruned_z[indices] + 3
-            
-            pos_i_h = pos[indices_h,:]
-            pos_i = pruned_pos[indices,:]
-            
-            dist_matrix = torch.cdist(pos_i, pos_i_h)
-            hydrogen_mask = (z[indices_h] == 0)
-            hgs = torch.sum((dist_matrix < 1.2) & hydrogen_mask, dim=1)
-            batched_hgs[i, :len(indices)] = hgs + 2
-            
+            indices = (batch == i).nonzero(as_tuple=True)[0]
+            batched_z[i, :len(indices)] = z[indices] + 2
+            batched_hgs[i, :len(indices)] = hgs[indices] + 2
+            pos_i = pos[indices,:]
             diff = pos_i[None, :, :] - pos_i[:, None, :]  # NxNx3
             dist = (diff ** 2).sum(dim=-1).sqrt()  # BxNxN
             batched_dist[i, :len(indices), :len(indices)] = dist
