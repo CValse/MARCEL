@@ -13,8 +13,8 @@ class Model3D(torch.nn.Module):
         outs = []
         for model, data in zip(self.models, batched_data):
             data = data.to(self.device)
-            z, pos, batch = data.x[:, 0], data.pos, data.batch
-            out = model(z, pos, batch)
+            z, pos, bat = data.x[:, 0], data.pos, data.batch
+            out = model(z, pos, bat)
             if model.__class__.__name__ == 'LEFTNet':
                 out = out[0]
             outs.append(out)

@@ -1,0 +1,173 @@
+activation: relu
+batch_size: 256
+cosine_annealing_lr: !!python/object:config.CosineAnnealingLR
+  eta_min: 1.0e-06
+dataset: BDE
+device: cuda:0
+dropout: 0.5
+hidden_dim: 128
+learning_rate: 0.001
+linear_warmup_cosine_annealing_lr: !!python/object:config.LinearWarmupCosineAnnealingLR
+  max_epochs: 2000
+  warmup_steps: 200
+max_num_conformers: 20
+max_num_molecules: null
+model1d: !!python/object:configs.model_1d.Model1D
+  embedding_dim: 128
+  input_type: SMILES
+  model: LSTM
+  num_heads: 4
+  num_layers: 4
+model2d: !!python/object:configs.model_2d.Model2D
+  chemprop: !!python/object:configs.model_2d.ChemProp
+    num_layers: 6
+  gin: !!python/object:configs.model_2d.GIN
+    num_layers: 6
+    virtual_node: false
+  gps: !!python/object:configs.model_2d.GPS
+    num_heads: 4
+    num_layers: 6
+    walk_length: 20
+  model: GIN
+model3d: !!python/object:configs.model_3d.Model3D
+  augmentation: true
+  clofnet: !!python/object:configs.model_3d.ClofNet
+    cutoff: 6.5
+    hidden_channels: 128
+    num_layers: 6
+    num_radial: 32
+  dimenet: !!python/object:configs.model_3d.DimeNet
+    hidden_channels: 128
+    num_bilinear: 8
+    num_blocks: 6
+    num_radial: 6
+    num_spherical: 7
+    out_channels: 128
+  dimenetplusplus: !!python/object:configs.model_3d.DimeNetPlusPlus
+    basis_emb_size: 8
+    hidden_channels: 128
+    int_emb_size: 64
+    num_blocks: 4
+    num_radial: 6
+    num_spherical: 7
+    out_channels: 128
+    out_emb_channels: 256
+  gemnet: !!python/object:configs.model_3d.GemNet
+    bond_feat_dim: 0
+    emb_size_atom: 128
+    emb_size_bil_trip: 64
+    emb_size_cbf: 16
+    emb_size_edge: 128
+    emb_size_rbf: 16
+    emb_size_trip: 64
+    num_after_skip: 1
+    num_atom: 2
+    num_atoms: 1
+    num_before_skip: 1
+    num_blocks: 4
+    num_concat: 1
+    num_radial: 6
+    num_spherical: 7
+  leftnet: !!python/object:configs.model_3d.LEFTNet
+    cutoff: 6.5
+    hidden_channels: 128
+    num_layers: 6
+    num_radial: 32
+  model: PaiNN
+  painn: !!python/object:configs.model_3d.PaiNN
+    cutoff: 12.0
+    hidden_dim: 128
+    num_interactions: 6
+    num_rbf: 64
+    readout: add
+    shared_filters: false
+    shared_interactions: false
+  schnet: !!python/object:configs.model_3d.SchNet
+    cutoff: 10
+    dipole: false
+    hidden_dim: 128
+    num_filters: 5
+    num_gaussians: 50
+    num_interactions: 6
+    readout: mean
+model4d: !!python/object:configs.model_4d.Model4D
+  clofnet: !!python/object:configs.model_3d.ClofNet
+    cutoff: 6.5
+    hidden_channels: 128
+    num_layers: 6
+    num_radial: 32
+  dimenet: !!python/object:configs.model_3d.DimeNet
+    hidden_channels: 128
+    num_bilinear: 8
+    num_blocks: 6
+    num_radial: 6
+    num_spherical: 7
+    out_channels: 128
+  dimenetplusplus: !!python/object:configs.model_3d.DimeNetPlusPlus
+    basis_emb_size: 8
+    hidden_channels: 128
+    int_emb_size: 64
+    num_blocks: 4
+    num_radial: 6
+    num_spherical: 7
+    out_channels: 128
+    out_emb_channels: 256
+  gemnet: !!python/object:configs.model_3d.GemNet
+    bond_feat_dim: 0
+    emb_size_atom: 128
+    emb_size_bil_trip: 64
+    emb_size_cbf: 16
+    emb_size_edge: 128
+    emb_size_rbf: 16
+    emb_size_trip: 64
+    num_after_skip: 1
+    num_atom: 2
+    num_atoms: 1
+    num_before_skip: 1
+    num_blocks: 4
+    num_concat: 1
+    num_radial: 6
+    num_spherical: 7
+  graph_encoder: SchNet
+  painn: !!python/object:configs.model_3d.PaiNN
+    cutoff: 12.0
+    hidden_dim: 128
+    num_interactions: 6
+    num_rbf: 64
+    readout: add
+    shared_filters: false
+    shared_interactions: false
+  schnet: !!python/object:configs.model_3d.SchNet
+    cutoff: 10
+    dipole: false
+    hidden_dim: 128
+    num_filters: 5
+    num_gaussians: 50
+    num_interactions: 6
+    readout: mean
+  set_encoder: Attention
+  transformer: !!python/object:configs.model_4d.TransformerPooling
+    num_heads: 8
+    num_layers: 2
+modelfprf: !!python/object:configs.model_fp_rf.ModelFPRF
+  min_impurity_decrease: 0
+  min_samples_leaf: 2
+  min_samples_split: 10
+  n_estimators: 500
+  n_jobs: 8
+  warm_start: true
+num_epochs: 2000
+one_cycle_lr: !!python/object:config.OneCycleLR
+  max_lr: 0.001
+  steps_per_epoch: 100
+patience: 200
+reduce_lr_on_plateau: !!python/object:config.ReduceLROnPlateau
+  factor: 0.8
+  mode: min
+  patience: 20
+scheduler: null
+seed: 123
+target: BindingEnergy
+train_ratio: 0.7
+valid_ratio: 0.1
+weight_decay: 0.0001
