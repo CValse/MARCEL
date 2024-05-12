@@ -72,7 +72,7 @@ class ChytorchDiscrete(Module):
     
     def forward(self, 
         z: Tensor,
-        hgs: Tensor
+        hgs: Tensor,
         pos: Tensor,
         batch: Tensor = None):
         assert z.dim() == 1 and z.dtype == long
