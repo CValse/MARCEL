@@ -33,7 +33,7 @@ class ChytorchDiscrete(Module):
         #super(ChytorchDiscrete, self).__init__()
         super().__init__()
         
-        self.embedding = EmbeddingBag(max_neighbors, d_model, perturbation, max_tokens, lora_r, lora_alpha, consider_chirality = self.consider_chirality)
+        self.embedding = EmbeddingBag(max_neighbors, d_model, perturbation, max_tokens, lora_r, lora_alpha)
 
         self.shared_attention_bias = shared_attention_bias
         if shared_attention_bias:
@@ -71,11 +71,11 @@ class ChytorchDiscrete(Module):
         self._register_load_state_dict_pre_hook(_update)
     
     def forward(self, 
-        z: Tensor,
-        hgs: Tensor,
-        pos: Tensor,
-        batch: Tensor = None):
-        assert z.dim() == 1 and z.dtype == long
+        z: torch.Tensor,
+        hgs: torch.Tensor,
+        pos: torch.Tensor,
+        batch: torch.Tensor = None):
+        assert z.dim() == 1 and z.dtype == torch.long
 
         """
         Use 0 for padding.
@@ -86,16 +86,22 @@ class ChytorchDiscrete(Module):
         Distances should be coded from 2 (means self-loop) to max_distance + 2.
         Non-reachable atoms should be coded by 1.
         """
-        z = z+2
-        hgs = hgs +2
+
         #cache = repeat(None) if cache is None else iter(cache)
         batch = torch.zeros_like(z) if batch is None else batch
         
         N = max(batch.bincount())
         num_batches = max(batch)+1
-        batched_z = t_zeros(num_batches, N, dtype=torch.int32, device=z.device)
-        batched_hgs = t_zeros(num_batches, N, dtype=torch.int32, device=z.device)
-        batched_dist = t_zeros(num_batches, N, N, device=z.device)
+        batched_z = torch.zeros(num_batches, N, dtype=torch.int32, device=z.device)
+        batched_hgs =torch.zeros(num_batches, N, dtype=torch.int32, device=z.device)
+        batched_dist = torch.zeros(num_batches, N+1, N+1, dtype=torch.int32, device=z.device)
+
+        short_cutoff =.9
+        long_cutoff = 5.
+        precision = .05
+        _bins = np.arange(short_cutoff - 3 * precision, long_cutoff, precision)
+        _bins[:3] = [-1, 0, .01]  # trick for self-loop coding
+        self.max_distance = len(_bins) - 2  # param for MoleculeEncoder
         
         # Populate the batched_tensor
         for i in range(num_batches):
@@ -105,7 +111,17 @@ class ChytorchDiscrete(Module):
             pos_i = pos[indices,:]
             diff = pos_i[None, :, :] - pos_i[:, None, :]  # NxNx3
             dist = (diff ** 2).sum(dim=-1).sqrt()  # BxNxN
-            batched_dist[i, :len(indices), :len(indices)] = dist
+
+            dist = np.digitize(dist.cpu(), _bins)
+            dist = torch.tensor(dist, dtype=torch.int32, device = z.device)
+            
+            tmp = torch.ones((len(indices)+1, len(indices)+1), dtype=torch.int32)
+            tmp[1:, 1:] = dist
+            
+            batched_dist[i, :len(indices)+1, :len(indices)+1] = tmp
+            diagonal = torch.diag(batched_dist[i, :, :])
+            zero_diagonal_indices = torch.where(diagonal == 0)[0]
+            batched_dist[i, zero_diagonal_indices, zero_diagonal_indices] = 1
 
         #add 1 cls
         atoms = torch.ones(batched_z.shape[0], batched_z.shape[1] + 1, dtype=torch.int32, device=z.device)
@@ -114,17 +130,11 @@ class ChytorchDiscrete(Module):
         atoms[:,1:] = batched_z.int()
         neighbors[:,1:] = batched_hgs.int()
 
-        short_cutoff =.9
-        long_cutoff = 5.
-        precision = .05
-        _bins = np.arange(short_cutoff - 3 * precision, long_cutoff, precision)
-        _bins[:3] = [-1, 0, .01]  # trick for self-loop coding
-        self.max_distance = len(_bins) - 2  # param for MoleculeEncoder
-
-        dist = np.digitize(batched_dist.cpu(), _bins)
-        tmp = np.ones((num_batches, atoms.shape[1], atoms.shape[1]), dtype=int32)
-        tmp[:,1:, 1:] = dist
-        distances = torch.tensor(tmp, dtype=torch.int32, device = z.device)
+        #dist = np.digitize(batched_dist.cpu(), _bins)
+        #tmp = torch.ones((num_batches, atoms.shape[1], atoms.shape[1]), dtype=torch.int32)
+        #tmp[:,1:, 1:] = dist
+        distances = batched_dist.to(z.device)#torch.tensor(batched_dist, dtype=torch.int32, device = z.device)
+        #distances = torch.tensor(tmp, dtype=torch.int32, device = z.device)
 
         # cls token in neighbors coded by 0
         x = self.embedding(atoms, neighbors)
@@ -136,8 +146,8 @@ class ChytorchDiscrete(Module):
             x, _ = lr(x, d_mask)  # noqa
 
         if self.post_norm:
-            return self.norm(x)
-        return x
+            return self.norm(x)[:,0]
+        return x[:,0]
 
     def merge_lora(self):
         """

@@ -11,6 +11,42 @@ class SchNet:
     readout: str = 'mean'
     dipole: bool = False
 
+@dataclass
+class ChytorchDiscrete:
+    max_distance: int = 83
+    d_model: int = 128
+    nhead: int = 16
+    num_layers: int = 8
+    dim_feedforward: int = 512
+    shared_weights: bool = False
+    dropout: float = 0.1
+    norm_first: bool = True
+    post_norm: bool = True
+    zero_bias: bool = True
+    
+@dataclass
+class ChytorchConformer:
+    nkernel: int = 128
+    shared_layers: bool = True
+    d_model: int = 128
+    nhead: int = 16
+    num_layers: int = 8
+    dim_feedforward: int = 512
+    dropout: float = 0.1
+    norm_first: bool = True
+    post_norm: bool = True
+
+@dataclass
+class ChytorchRotary:
+    d_model: int = 128
+    nhead: int = 16
+    num_layers: int = 8
+    dim_feedforward: int = 512
+    shared_weights: bool = False
+    dropout: float = 0.1
+    norm_first: bool = False
+    post_norm: bool = False
+
 
 @dataclass
 class DimeNet:
@@ -93,3 +129,7 @@ class Model3D:
     painn: PaiNN = PaiNN()
     clofnet: ClofNet = ClofNet()
     leftnet: LEFTNet = LEFTNet()
+    chytorch_discrete: ChytorchDiscrete = ChytorchDiscrete()
+    chytorch_conformer: ChytorchConformer = ChytorchConformer()
+    chytorch_rotary: ChytorchRotary = ChytorchRotary()
+
