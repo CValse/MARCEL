@@ -143,14 +143,14 @@ class DataModule(LightningDataModule):
                                                                    batch_size=self.hparams.batch_size, 
                                                                    strategy=strategy, 
                                                                    shuffle=shuffle),
-                           num_workers=20)
+                           num_workers=50)
         else:
             dl = MultiBatchLoader(dataset, batch_sampler=EnsembleMultiBatchSampler(dataset, 
                                                                                    batch_size=self.hparams.batch_size, 
                                                                                    strategy=strategy, 
                                                                                    shuffle=shuffle, 
                                                                                    variable_name=self.variable_name),
-                                 num_workers=20)
+                                 num_workers=50)
         if store_dataloader:
             self._saved_dataloaders[stage] = dl
         return dl
