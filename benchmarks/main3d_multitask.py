@@ -515,7 +515,7 @@ def main():
     r2test = r2_score(perf_dict['y_true'], perf_dict['y_pred'])
     res_df = pd.DataFrame(perf_dict)
     r2_str = ''
-    for i,lab in zip([res_df['token'].unique(), data.dataset.descriptors]):
+    for i,lab in zip(list(res_df['token'].unique()), data.dataset.descriptors):
         r2test_i = r2_score(res_df[res_df['token']==i]['y_true'], 
                             res_df[res_df['token']==i]['y_pred'])
         print(f'{lab} R2 = {str(r2test_i)[:4]}')

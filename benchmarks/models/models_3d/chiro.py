@@ -6,23 +6,6 @@ import numpy as np
 import torch_scatter
 import math
 
-def get_local_structure_map(psi_indices):
-    LS_dict = OrderedDict()
-    LS_map = torch.zeros(psi_indices.shape[1], dtype = torch.long)
-    v = 0
-    for i, indices in enumerate(psi_indices.T):
-        tupl = (int(indices[1]), int(indices[2]))
-        if tupl not in LS_dict:
-            LS_dict[tupl] = v
-            v += 1
-        LS_map[i] = LS_dict[tupl]
-
-    alpha_indices = torch.zeros((2, len(LS_dict)), dtype = torch.long)
-    for i, tupl in enumerate(LS_dict):
-        alpha_indices[:,i] = torch.LongTensor(tupl)
-
-    return LS_map, alpha_indices
-
 class MLP(nn.Module):
     def __init__(self, input_size, output_size, hidden_sizes, activation_hidden, activation_out, biases, dropout):
         super(MLP, self).__init__()
@@ -306,24 +289,24 @@ class InternalCoordinateEncoder(nn.Module):
 
 class ChIRo(nn.Module):
     def __init__(self, 
-        F_H_embed: int=41, # dimension of initial node feature vector,
-        F_E_embed: int=12, # dimension of initial edge feature vector,
-        F_z_list: list=[8, 8, 8], 
-        F_H: int=64,
-        F_H_EConv: int=64,
+        F_H_embed: int=52, # dimension of initial node feature vector,
+        F_E_embed: int=14, # dimension of initial edge feature vector,
+        F_z_list: list=[128, 128, 128], 
+        F_H: int=128,
+        F_H_EConv: int=128,
         #layers_dict: dict, 
-        GAT_N_heads: int = 1,
+        GAT_N_heads: int = 8,
         chiral_message_passing: bool=False, 
         CMP_EConv_MLP_hidden_sizes: list = [64],
-        CMP_GAT_N_layers: int = 2,
-        CMP_GAT_N_heads: int=1, 
-        c_coefficient_normalization: str=None,
-        encoder_reduction: str='mean', 
+        CMP_GAT_N_layers: int = 3,
+        CMP_GAT_N_heads: int=2, 
+        c_coefficient_normalization: str='sigmoid',
+        encoder_reduction: str='sum', 
         output_concatenation_mode: str = 'molecule',
         EConv_bias=True, 
         GAT_bias=True, 
         encoder_biases=True, 
-        dropout=0.0):
+        dropout=0.1):
         super(ChIRo, self).__init__()
 
         assert len(F_z_list) == 3
@@ -335,12 +318,12 @@ class ChIRo(nn.Module):
 
         layers_dict = {
             "EConv_mlp_hidden_sizes":   [64],
-            "GAT_hidden_node_sizes":    [32, 32],
-            "encoder_hidden_sizes_D":   [128, 128], 
-            "encoder_hidden_sizes_phi": [128, 128],
-            "encoder_hidden_sizes_c": [128, 128],
-            "encoder_hidden_sizes_alpha": [128, 128],
-            "encoder_hidden_sizes_sinusoidal_shift": [256, 256],
+            "GAT_hidden_node_sizes":    [32],
+            "encoder_hidden_sizes_D":   [32, 32], 
+            "encoder_hidden_sizes_phi": [32, 32],
+            "encoder_hidden_sizes_c": [32, 32],
+            "encoder_hidden_sizes_alpha": [32, 32],
+            "encoder_hidden_sizes_sinusoidal_shift": [256, 256, 256],
             "output_mlp_hidden_sizes": [64, 64]}
 
         EConv_mlp = MLP(
@@ -405,15 +388,15 @@ class ChIRo(nn.Module):
         elif self.output_concatenation_mode == 'z_alpha':
             mlp_input_size = self.F_z_list[2]
 
-        if output_concatenation_mode in ['both', 'molecule', 'conformer', 'z_alpha']:
-            self.Output_MLP = MLP(
-                input_size=mlp_input_size,
-                output_size=1,
-                hidden_sizes=layers_dict['output_mlp_hidden_sizes'],
-                activation_hidden=torch.nn.LeakyReLU(negative_slope=0.01),
-                activation_out=torch.nn.Identity(),
-                biases=encoder_biases,
-                dropout=dropout)
+        #if output_concatenation_mode in ['both', 'molecule', 'conformer', 'z_alpha']:
+        #    self.Output_MLP = MLP(
+        #        input_size=mlp_input_size,
+        #        output_size=1,
+        #        hidden_sizes=layers_dict['output_mlp_hidden_sizes'],
+        #        activation_hidden=torch.nn.LeakyReLU(negative_slope=0.01),
+        #        activation_out=torch.nn.Identity(),
+        #        biases=encoder_biases,
+        #        dropout=dropout)
 
     def forward(self, data, LS_map, alpha_indices):
         node_features, edge_index, edge_attr, distances, distance_indices, phis, phi_indices, psis, psi_indices = data.x, data.edge_index, data.edge_attr, data.bond_distances, data.bond_distance_index, data.bond_angles, data.bond_angle_index, data.dihedral_angles, data.dihedral_angle_index
@@ -441,8 +424,9 @@ class ChIRo(nn.Module):
         elif self.output_concatenation_mode == 'z_alpha':
             embedding = latent_vector[:, self.F_z_list[0] + self.F_z_list[1]:]
 
-        if self.output_concatenation_mode in ['both', 'molecule', 'conformer', 'z_alpha']:
-            output = self.Output_MLP(embedding)
-            return output#, latent_vector, phase_shift_norm, z_alpha, mol_embedding, c_tensor, phase_cos, phase_sin, sin_cos_psi, sin_cos_alpha
-        else:
-            return latent_vector, phase_shift_norm, z_alpha, mol_embedding, c_tensor, phase_cos, phase_sin, sin_cos_psi, sin_cos_alpha
+        #if self.output_concatenation_mode in ['both', 'molecule', 'conformer', 'z_alpha']:
+        #    output = self.Output_MLP(embedding)
+        #    return output#, latent_vector, phase_shift_norm, z_alpha, mol_embedding, c_tensor, phase_cos, phase_sin, sin_cos_psi, sin_cos_alpha
+        #else:
+        #    return latent_vector, phase_shift_norm, z_alpha, mol_embedding, c_tensor, phase_cos, phase_sin, sin_cos_psi, sin_cos_alpha
+        return embedding

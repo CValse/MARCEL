@@ -7,6 +7,7 @@ from torch.nn.functional import l1_loss
 from torch.nn.modules.loss import _Loss
 from torchtyping import TensorType
 from typing import Optional
+from collections import OrderedDict
 
 class Model3D(torch.nn.Module):
     def __init__(self, model_factory, hidden_dim, out_dim, device, unique_variables=1, multitask=False):
@@ -31,7 +32,7 @@ class Model3D(torch.nn.Module):
                     out = model(z, hgs, pos, bat)
             elif model.__class__.__name__ in ['ChIRo']:
                 #z, hgs, pos, bat = data.x[:, 0]+1, data.x[:, 4], data.pos, data.batch
-                from models_3d.chiro import get_local_structure_map
+                #from models_3d.chiro import get_local_structure_map
                 LS_map, alpha_indices = get_local_structure_map(data.dihedral_angle_index)
                 data = data.to(self.device)
                 LS_map = LS_map.to(self.device)
@@ -158,3 +159,20 @@ class GroupedScaledMAELoss(_Loss):
             scaler = (self.targets_coefficients / self.mean_targets.abs().clamp(1) / cnt)[idx]
 
         return l1_loss(input, target, reduction='none') @ scaler
+
+def get_local_structure_map(psi_indices):
+    LS_dict = OrderedDict()
+    LS_map = torch.zeros(psi_indices.shape[1], dtype = torch.long)
+    v = 0
+    for i, indices in enumerate(psi_indices.T):
+        tupl = (int(indices[1]), int(indices[2]))
+        if tupl not in LS_dict:
+            LS_dict[tupl] = v
+            v += 1
+        LS_map[i] = LS_dict[tupl]
+
+    alpha_indices = torch.zeros((2, len(LS_dict)), dtype = torch.long)
+    for i, tupl in enumerate(LS_dict):
+        alpha_indices[:,i] = torch.LongTensor(tupl)
+
+    return LS_map, alpha_indices
