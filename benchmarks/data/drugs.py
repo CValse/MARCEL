@@ -7,14 +7,16 @@ from collections import defaultdict
 from torch_geometric.data import extract_zip
 
 from loaders.utils import mol_to_data_obj
+from loaders.utils_chiro import mol_to_data_chiro
 from loaders.ensemble import EnsembleDataset
 
 
 class Drugs(EnsembleDataset):
     descriptors = ['energy', 'ip', 'ea', 'chi']
 
-    def __init__(self, root, max_num_conformers=None, transform=None, pre_transform=None, pre_filter=None):
+    def __init__(self, root, max_num_conformers=None, transform=None, pre_transform=None, pre_filter=None, chiro_data = False):
         self.max_num_conformers = max_num_conformers
+        self.chiro_data = chiro_data
         super().__init__(root, transform, pre_transform, pre_filter)
 
     @property
@@ -48,7 +50,10 @@ class Drugs(EnsembleDataset):
                 name = mol.GetProp('_Name')
                 smiles = mol.GetProp('smiles')
 
-                data = mol_to_data_obj(mol)
+                if self.chiro_data:
+                    data = mol_to_data_chiro(mol)
+                else:
+                    data = mol_to_data_obj(mol)
                 data.name = name
                 data.id = id_
 

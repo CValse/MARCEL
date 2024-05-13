@@ -481,7 +481,7 @@ def main():
     
     
     model_params.update(dict(
-        max_epochs=10,#config.num_epochs,#1000,
+        max_epochs=5,#config.num_epochs,#1000,
         callbacks=[checkpoint_callback, early_stopping],
         #enable_checkpointing=False,
         gradient_clip_val=10,#args['clip_norm'],
@@ -515,7 +515,7 @@ def main():
     r2test = r2_score(perf_dict['y_true'], perf_dict['y_pred'])
     res_df = pd.DataFrame(perf_dict)
     r2_str = ''
-    for i,lab in zip([res_df['token'].unique(), dataset.descriptors]):
+    for i,lab in zip([res_df['token'].unique(), data.dataset.descriptors]):
         r2test_i = r2_score(res_df[res_df['token']==i]['y_true'], 
                             res_df[res_df['token']==i]['y_pred'])
         print(f'{lab} R2 = {str(r2test_i)[:4]}')

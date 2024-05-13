@@ -116,6 +116,9 @@ class PaiNN:
     shared_interactions: bool = False
     shared_filters: bool = False
 
+@dataclass
+class ChIRo:
+    pass
 
 @dataclass
 class Model3D:
@@ -129,6 +132,7 @@ class Model3D:
     painn: PaiNN = PaiNN()
     clofnet: ClofNet = ClofNet()
     leftnet: LEFTNet = LEFTNet()
+    chiro: ChIRo = ChIRo()
     chytorch_discrete: ChytorchDiscrete = ChytorchDiscrete()
     chytorch_conformer: ChytorchConformer = ChytorchConformer()
     chytorch_rotary: ChytorchRotary = ChytorchRotary()

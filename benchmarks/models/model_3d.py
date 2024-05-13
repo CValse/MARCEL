@@ -29,6 +29,14 @@ class Model3D(torch.nn.Module):
                 else:
                     z, hgs, pos, bat = data.x[:, 0]+1, data.x[:, 4], data.pos, data.batch
                     out = model(z, hgs, pos, bat)
+            elif model.__class__.__name__ in ['ChIRo']:
+                #z, hgs, pos, bat = data.x[:, 0]+1, data.x[:, 4], data.pos, data.batch
+                from models_3d.chiro import get_local_structure_map
+                LS_map, alpha_indices = get_local_structure_map(data.dihedral_angle_index)
+                data = data.to(self.device)
+                LS_map = LS_map.to(self.device)
+                alpha_indices = alpha_indices.to(self.device)
+                out = model(data, LS_map, alpha_indices)
             else:
                 z, pos, bat = data.x[:, 0], data.pos, data.batch
                 out = model(z, pos, bat)
