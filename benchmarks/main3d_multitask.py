@@ -75,6 +75,9 @@ class DataModule(LightningDataModule):
                 dataset = BDE('/mnt/data/MARCEL/datasets/BDE').shuffle()
                 self.variable_name = 'is_ligand'
                 unique_variables = 2
+            elif self.hparams.dataset == 'tmQMg':
+                dataset = tmQMg('/mnt/data/MARCEL/datasets/tmQMg').shuffle()
+                unique_variables = 1
             elif self.hparams.dataset == 'EE':
                 dataset = EE('/mnt/data/MARCEL/datasets/EE', max_num_conformers=self.hparams.max_num_conformers).shuffle()
                 self.variable_name = 'config_id'
@@ -546,6 +549,7 @@ if __name__ == '__main__':
     from data.bde import BDE
     from data.drugs import Drugs
     from data.kraken import Kraken
+    from data.tqmg import tmQMg
     from happy_config import ConfigLoader
     from loaders.samplers import EnsembleSampler, EnsembleMultiBatchSampler
     from loaders.multibatch import MultiBatchLoader

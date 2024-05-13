@@ -7,13 +7,14 @@ from collections import defaultdict
 from torch_geometric.data import extract_zip
 
 from loaders.utils import mol_to_data_obj
+from loaders.utils_chiro import mol_to_data_chiro
 from loaders.ensemble import EnsembleDataset
 
 
 class BDE(EnsembleDataset):
     descriptors = ['BindingEnergy']
 
-    def __init__(self, root, max_num_conformers=None, transform=None, pre_transform=None, pre_filter=None):
+    def __init__(self, root, max_num_conformers=None, transform=None, pre_transform=None, pre_filter=None, chiro_data = False):
         self.max_num_conformers = max_num_conformers
         super().__init__(root, transform, pre_transform, pre_filter)
         out = torch.load(self.processed_paths[0])
@@ -53,7 +54,10 @@ class BDE(EnsembleDataset):
             raw_file = label_file.replace('BDE.txt', f'{filename}.sdf')
             with Chem.SDMolSupplier(raw_file, removeHs=True) as suppl:
                 for mol in tqdm(suppl):
-                    data = mol_to_data_obj(mol)
+                    if self.chiro_data:
+                        data = mol_to_data_chiro(mol)
+                    else:
+                        data = mol_to_data_obj(mol)
 
                     data.smiles = Chem.MolToSmiles(mol)
                     data.name = mol.GetProp('Name')

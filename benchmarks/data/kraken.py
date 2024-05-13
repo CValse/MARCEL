@@ -6,13 +6,14 @@ from rdkit import Chem
 from torch_geometric.data import extract_zip
 
 from loaders.utils import mol_to_data_obj
+from loaders.utils_chiro import mol_to_data_chiro
 from loaders.ensemble import EnsembleDataset
 
 
 class Kraken(EnsembleDataset):
     descriptors = ['sterimol_B5', 'sterimol_L', 'sterimol_burB5', 'sterimol_burL']
 
-    def __init__(self, root, max_num_conformers=None, transform=None, pre_transform=None, pre_filter=None):
+    def __init__(self, root, max_num_conformers=None, transform=None, pre_transform=None, pre_filter=None, chiro_data = False):
         self.max_num_conformers = max_num_conformers
         super().__init__(root, transform, pre_transform, pre_filter)
         out = torch.load(self.processed_paths[0])
@@ -60,7 +61,10 @@ class Kraken(EnsembleDataset):
                 mol_sdf, boltz_weight, conformer_properties = conformer_dict[conformer_id]
                 mol = Chem.MolFromMolBlock(mol_sdf, removeHs=False)
 
-                data = mol_to_data_obj(mol)
+                if self.chiro_data:
+                    data = mol_to_data_chiro(mol)
+                else:
+                    data = mol_to_data_obj(mol)
                 data.name = f'mol{int(ligand_id)}'
                 data.id = f'{data.name}_{conformer_id}'
                 data.smiles = smiles

@@ -8,6 +8,7 @@ from collections import defaultdict
 from torch_geometric.data import extract_zip
 
 from loaders.utils import mol_to_data_obj
+from loaders.utils_chiro import mol_to_data_chiro
 from loaders.ensemble import EnsembleDataset
 
 
@@ -15,7 +16,7 @@ class EE_2D(EnsembleDataset):
     descriptors = ['de']
     excluded_ids = ['atrop-merg-enamide-phe-bn-h-B_R10333']
 
-    def __init__(self, root, split='train', transform=None, pre_transform=None):
+    def __init__(self, root, split='train', transform=None, pre_transform=None, chiro_data = False):
         self.split = split
         super().__init__(root, transform, pre_transform)
         out = torch.load(self.processed_paths[0])
@@ -57,8 +58,13 @@ class EE_2D(EnsembleDataset):
                 frags = Chem.GetMolFrags(mol, asMols=True)
                 if frags[0].GetNumAtoms() > frags[1].GetNumAtoms():
                     frags = frags[::-1]
-                data_0 = mol_to_data_obj(frags[0])
-                data_1 = mol_to_data_obj(frags[1])
+
+                if self.chiro_data:
+                    data_0 = mol_to_data_chiro(frags[0])
+                    data_1 = mol_to_data_chiro(frags[1])
+                else:
+                    data_0 = mol_to_data_obj(frags[0])
+                    data_1 = mol_to_data_obj(frags[1])
 
                 data_0.id = id
                 data_0.smiles = Chem.MolToSmiles(frags[0])
@@ -138,7 +144,10 @@ class EE(EnsembleDataset):
         mols = defaultdict(list)
         with Chem.SDMolSupplier(raw_file, removeHs=False) as suppl:
             for mol in tqdm(suppl):
-                data = mol_to_data_obj(mol)
+                if self.chiro_data:
+                    data = mol_to_data_chiro(mol)
+                else:
+                    data = mol_to_data_obj(mol)
 
                 data.energy = float(mol.GetProp('energy'))
                 data.smiles = mol.GetProp('smiles')
