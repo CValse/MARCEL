@@ -18,9 +18,11 @@ class EE_2D(EnsembleDataset):
 
     def __init__(self, root, split='train', transform=None, pre_transform=None, chiro_data = False):
         self.split = split
+        self.chiro_data=chiro_data
         super().__init__(root, transform, pre_transform)
         out = torch.load(self.processed_paths[0])
         self.data, self.slices, self.y = out
+        
 
     @property
     def processed_file_names(self):

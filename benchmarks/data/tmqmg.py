@@ -16,6 +16,7 @@ class tmQMg(EnsembleDataset):
 
     def __init__(self, root, max_num_conformers=None, transform=None, pre_transform=None, pre_filter=None, chiro_data = False):
         self.max_num_conformers = max_num_conformers
+        self.chiro_data=chiro_data
         super().__init__(root, transform, pre_transform, pre_filter)
 
     @property
