@@ -549,7 +549,7 @@ if __name__ == '__main__':
     from data.bde import BDE
     from data.drugs import Drugs
     from data.kraken import Kraken
-    from data.tqmg import tmQMg
+    from data.tmqmg import tmQMg
     from happy_config import ConfigLoader
     from loaders.samplers import EnsembleSampler, EnsembleMultiBatchSampler
     from loaders.multibatch import MultiBatchLoader
