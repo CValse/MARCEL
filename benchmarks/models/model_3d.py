@@ -9,21 +9,26 @@ from torchtyping import TensorType
 from typing import Optional
 
 class Model3D(torch.nn.Module):
-    def __init__(self, model_factory, hidden_dim, out_dim, device, unique_variables=1):
+    def __init__(self, model_factory, hidden_dim, out_dim, device, unique_variables=1, multitask=False):
         super().__init__()
         self.models = torch.nn.ModuleList(
             [model_factory() for _ in range(unique_variables)])
         #self.linear = torch.nn.Linear(hidden_dim * unique_variables, out_dim)#to symbolic
         self.linear = Symbolic(hidden_dim * unique_variables, 1, bias = False)  #(hidden_dim * unique_variables, out_dim)#to symbolic
         self.device = device
+        self.multitask = multitask
 
     def forward(self, batched_data):
         outs = []
         for model, data in zip(self.models, batched_data):
             data = data.to(self.device)
             if model.__class__.__name__ in ['ChytorchConformer','ChytorchDiscrete','ChytorchRotary']:
-                z, hgs, pos, bat = data.x[:, 0]+1, data.x[:, 4], data.pos, data.batch
-                out = model(z, hgs, pos, bat)
+                if self.multitask:
+                    z, hgs, pos, bat, tokens = data.x[:, 0]+1, data.x[:, 4], data.pos, data.batch, data.tokens
+                    out = model(z, hgs, pos, bat, tokens)
+                else:
+                    z, hgs, pos, bat = data.x[:, 0]+1, data.x[:, 4], data.pos, data.batch
+                    out = model(z, hgs, pos, bat)
             else:
                 z, pos, bat = data.x[:, 0], data.pos, data.batch
                 out = model(z, pos, bat)

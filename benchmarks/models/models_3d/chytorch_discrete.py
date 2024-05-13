@@ -26,7 +26,7 @@ class ChytorchDiscrete(Module):
             post_norm: bool = False,
             zero_bias: bool = False,
             perturbation: float = 0.,
-            max_tokens: int = 121,
+            max_tokens: int = 121+10,
             lora_r: int = 0,
             lora_alpha: float = 1.,
             lora_dropout: float = 0.):
@@ -74,7 +74,8 @@ class ChytorchDiscrete(Module):
         z: torch.Tensor,
         hgs: torch.Tensor,
         pos: torch.Tensor,
-        batch: torch.Tensor = None):
+        batch: torch.Tensor = None, 
+        tokens: torch.Tensor = None):
         assert z.dim() == 1 and z.dtype == torch.long
 
         """
@@ -129,7 +130,12 @@ class ChytorchDiscrete(Module):
         #sum3 from default MAECEL
         atoms[:,1:] = batched_z.int()
         neighbors[:,1:] = batched_hgs.int()
-
+        
+        if tokens is None:
+            pass
+        else:
+            atoms[:,0]=tokens+121
+            
         #dist = np.digitize(batched_dist.cpu(), _bins)
         #tmp = torch.ones((num_batches, atoms.shape[1], atoms.shape[1]), dtype=torch.int32)
         #tmp[:,1:, 1:] = dist
