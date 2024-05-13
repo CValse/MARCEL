@@ -284,7 +284,7 @@ class ModelLM(LightningModule):
                             batch_multi[cnt].batch = torch.hstack([bat_tmp, batch[cnt].batch + (bat_tmp.max()+1)])
                 
                 targets_flat = targets.flatten()
-                prompts = torch.tensor([i for i in range(data.dataset.y.shape[1])]*targets.shape[0],
+                prompts = torch.tensor([i for i in range(self.whole_dataset.y.shape[1])]*targets.shape[0],
                                       dtype=torch.int32,
                                       device=targets.device)
                 for cnt, bat_i in enumerate(batch_multi):
