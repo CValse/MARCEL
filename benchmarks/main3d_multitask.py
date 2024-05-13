@@ -484,7 +484,7 @@ def main():
     
     
     model_params.update(dict(
-        max_epochs=5,#config.num_epochs,#1000,
+        max_epochs=config.num_epochs,#1000,
         callbacks=[checkpoint_callback, early_stopping],
         #enable_checkpointing=False,
         gradient_clip_val=10,#args['clip_norm'],
