@@ -13,6 +13,8 @@ import torch.nn as nn
 
 from pytorch_lightning import LightningModule, Trainer, LightningDataModule
 
+from models.model_3d import GroupedScaledMAELoss
+
 ###################################################
 import os
 import numpy as np
@@ -55,7 +57,7 @@ def r2_score_torch(y_true, y_pred):
     return r2.item()
 
 class DataModule(LightningDataModule):
-    def __init__(self, hparams, dataset=None, multitask = False):
+    def __init__(self, hparams, dataset=None, multitask = False, chiro_data = False):
         super().__init__()
         self.hparams.update(hparams.__dict__) if hasattr(hparams, "__dict__") else self.hparams.update(hparams)
         self._saved_dataloaders = dict()
@@ -67,15 +69,15 @@ class DataModule(LightningDataModule):
             unique_variables = 1
 
             if self.hparams.dataset == 'Drugs':
-                dataset = Drugs('/mnt/data/MARCEL/datasets/Drugs', max_num_conformers=self.hparams.max_num_conformers).shuffle()
+                dataset = Drugs('/mnt/data/MARCEL/datasets/Drugs', max_num_conformers=self.hparams.max_num_conformers, chiro_data = chiro_data).shuffle()
             elif self.hparams.dataset == 'Kraken':
-                dataset = Kraken('/mnt/data/MARCEL/datasets/Kraken', max_num_conformers=self.hparams.max_num_conformers).shuffle()
+                dataset = Kraken('/mnt/data/MARCEL/datasets/Kraken', max_num_conformers=self.hparams.max_num_conformers, chiro_data = chiro_data).shuffle()
             elif self.hparams.dataset == 'BDE':
-                dataset = BDE('/mnt/data/MARCEL/datasets/BDE').shuffle()
+                dataset = BDE('/mnt/data/MARCEL/datasets/BDE', chiro_data = chiro_data).shuffle()
                 self.variable_name = 'is_ligand'
                 unique_variables = 2
             elif self.hparams.dataset == 'EE':
-                dataset = EE('/mnt/data/MARCEL/datasets/EE', max_num_conformers=self.hparams.max_num_conformers).shuffle()
+                dataset = EE('/mnt/data/MARCEL/datasets/EE', max_num_conformers=self.hparams.max_num_conformers, chiro_data = chiro_data).shuffle()
                 self.variable_name = 'config_id'
                 unique_variables = 2
 
@@ -142,14 +144,14 @@ class DataModule(LightningDataModule):
                                                                    batch_size=self.hparams.batch_size, 
                                                                    strategy=strategy, 
                                                                    shuffle=shuffle),
-                           num_workers=20)
+                           num_workers=80)
         else:
             dl = MultiBatchLoader(dataset, batch_sampler=EnsembleMultiBatchSampler(dataset, 
                                                                                    batch_size=self.hparams.batch_size, 
                                                                                    strategy=strategy, 
                                                                                    shuffle=shuffle, 
                                                                                    variable_name=self.variable_name),
-                                 num_workers=20)
+                                 num_workers=80)
         if store_dataloader:
             self._saved_dataloaders[stage] = dl
         return dl
@@ -173,7 +175,7 @@ def compute_gnorm(model: nn.Module) -> float:
     return math.sqrt(sum([p.grad.norm().item() ** 2 for p in model.parameters() if p.grad is not None]))
 
 class ModelLM(LightningModule):
-    def __init__(self, max_atomic_num=None, whole_dataset = None, unique_variables=1, **kwargs):
+    def __init__(self, max_atomic_num=None, whole_dataset = None, unique_variables=1, multitask = False, **kwargs):
         super().__init__()
         #self.kwargs.update(kwargs.__dict__) if hasattr(kwargs, "__dict__") else self.kwargs.update(kwargs)
         print(kwargs.get('model3d'))
@@ -211,19 +213,25 @@ class ModelLM(LightningModule):
             model_factory = lambda: ChytorchRotary(max_neighbors=max_atomic_num, 
                                                    **asdict(kwargs.get('model3d').chytorch_rotary))
         self.device_= torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.multitask = multitask
         self.net = Model3D(model_factory, 
                            hidden_dim=kwargs.get('hidden_dim'), 
                            out_dim=1,
                            unique_variables=unique_variables, 
-                           device='cuda').to('cuda')
+                           device='cuda',
+                           multitask=self.multitask).to('cuda')
         
-        self.loss_fn = nn.MSELoss() #LOGITS #GroupedScaledMAELoss(torch.ones(4, dtype=torch.long))
-        #self.loss_fn = GroupedScaledMAELoss(torch.ones(20, dtype=torch.long))
+        self.whole_dataset = whole_dataset
+
+        if self.multitask:
+            self.loss_fn = GroupedScaledMAELoss(torch.ones(self.whole_dataset.y.shape[1], 
+                                                           dtype=torch.long))
+        else:
+            self.loss_fn = nn.MSELoss() #LOGITS #GroupedScaledMAELoss(torch.ones(4, dtype=torch.long))
         
         self.lr = kwargs.get('learning_rate')
         self.wd = kwargs.get('learning_rate')
-        self.whole_dataset = whole_dataset
-
+        
         self._reset_losses_dict()
         self._reset_inference_results()
         self.save_hyperparameters(ignore=["cosine_annealing_lr","linear_warmup_cosine_annealing_lr",
@@ -265,16 +273,41 @@ class ModelLM(LightningModule):
         targets = dataset[molecule_idx].squeeze()
 
         with torch.set_grad_enabled(stage == "train"):
-            pred = self(batch)
-            loss = self.loss_fn(pred.squeeze(), targets)
-            #loss = self.loss_fn(pred.squeeze(), targets, prompts-121)
+            if self.multitask:
+                batch_multi = batch.copy()
+                if self.whole_dataset.y.shape[1]==1:
+                    print('only one property-switch to singletask')
+                else:
+                    for cnt, bat_i in enumerate(batch_multi):
+                        for i in range(self.whole_dataset.y.shape[1]-1):
+                            bat_tmp = batch_multi[cnt].batch#.detach().clone()
+                            batch_multi[cnt] = batch_multi[cnt].concat(batch[cnt])
+                            batch_multi[cnt].batch = torch.hstack([bat_tmp, batch[cnt].batch + (bat_tmp.max()+1)])
+                
+                targets_flat = targets.flatten()
+                prompts = torch.tensor([i for i in range(data.dataset.y.shape[1])]*targets.shape[0],
+                                      dtype=torch.int32,
+                                      device=targets.device)
+                for cnt, bat_i in enumerate(batch_multi):
+                    batch_multi[cnt].tokens = prompts
+                pred = self(batch_multi)
+                loss = self.loss_fn(pred.squeeze(), targets_flat, prompts)
+                if stage == "test":
+                    self.inference_results['token'].append(prompts.squeeze())
+                    self.inference_results['y_pred'].append(pred.squeeze())
+                    self.inference_results['y_true'].append(targets_flat.squeeze())
+                    return None
+                r2=r2_score_torch(targets_flat.cpu(),pred.squeeze().cpu().detach())
+            else:
+                pred = self(batch)
+                loss = self.loss_fn(pred.squeeze(), targets)
             
-            if stage == "test":
-                self.inference_results['y_pred'].append(pred.squeeze())
-                self.inference_results['y_true'].append(targets.squeeze())
-                return None
+                if stage == "test":
+                    self.inference_results['y_pred'].append(pred.squeeze())
+                    self.inference_results['y_true'].append(targets.squeeze())
+                    return None
 
-            r2=r2_score_torch(targets.cpu(),pred.squeeze().cpu().detach())
+                r2=r2_score_torch(targets.cpu(),pred.squeeze().cpu().detach())
 
             self.logging_info[f'{stage}_loss'].append(loss.item())
             self.logging_info[f'{stage}_r2'].append(r2)
@@ -319,7 +352,8 @@ class ModelLM(LightningModule):
         }
         
     def _reset_inference_results(self):
-        self.inference_results = {'y_pred': [],
+        self.inference_results = {'token': [],
+                                  'y_pred': [],
                                   'y_true': []}
 
 def install(package):
@@ -362,6 +396,8 @@ def main():
     modeltype = args.modeltype
 
     config = Config
+    if modeltype=='ChIRo':
+        config.max_num_conformers=19
     config.dataset = dataname
     config.target = target
     config.device = 'cuda:0'
@@ -388,13 +424,14 @@ def main():
             else:
                 config_dict_datamodule[k]=v
 
-    data = DataModule(config_dict_datamodule)
+    data = DataModule(config_dict_datamodule, multitask = False, chiro_data = modeltype=='ChIRo')
     data.prepare_data()
     data.split_compute()
 
     model = ModelLM(max_atomic_num=data.max_atomic_num, 
                     whole_dataset = data.dataset, 
                     unique_variables=data.unique_variables, **config_dict)
+
     print(f'#PARAMS = {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
     
     dir_name = f"log_{dataname}_{target}_{modeltype}_v0"
