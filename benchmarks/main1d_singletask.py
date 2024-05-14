@@ -1,3 +1,4 @@
+import pip
 import gc
 import argparse
 import pandas as pd

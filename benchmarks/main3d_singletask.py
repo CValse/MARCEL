@@ -233,7 +233,7 @@ class ModelLM(LightningModule):
             self.loss_fn = nn.MSELoss() #LOGITS #GroupedScaledMAELoss(torch.ones(4, dtype=torch.long))
         
         self.lr = kwargs.get('learning_rate')
-        self.wd = kwargs.get('learning_rate')
+        self.wd = kwargs.get('weight_decay')
         
         self._reset_losses_dict()
         self._reset_inference_results()
