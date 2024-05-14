@@ -12,7 +12,6 @@ import pandas as pd
 import torch.nn as nn
 
 from pytorch_lightning import LightningModule, Trainer, LightningDataModule
-
 from models.model_3d import GroupedScaledMAELoss
 
 ###################################################
@@ -57,7 +56,7 @@ def r2_score_torch(y_true, y_pred):
     return r2.item()
 
 class DataModule(LightningDataModule):
-    def __init__(self, hparams, dataset=None, multitask = False, chiro_data = False):
+    def __init__(self, hparams, dataset=None, multitask = False):
         super().__init__()
         self.hparams.update(hparams.__dict__) if hasattr(hparams, "__dict__") else self.hparams.update(hparams)
         self._saved_dataloaders = dict()
@@ -69,18 +68,18 @@ class DataModule(LightningDataModule):
             unique_variables = 1
 
             if self.hparams.dataset == 'Drugs':
-                dataset = Drugs('/mnt/data/MARCEL/datasets/Drugs', max_num_conformers=self.hparams.max_num_conformers, chiro_data = chiro_data).shuffle()
+                dataset = Drugs('/mnt/data/MARCEL/datasets/Drugs', max_num_conformers=self.hparams.max_num_conformers).shuffle()
             elif self.hparams.dataset == 'Kraken':
-                dataset = Kraken('/mnt/data/MARCEL/datasets/Kraken', max_num_conformers=self.hparams.max_num_conformers, chiro_data = chiro_data).shuffle()
+                dataset = Kraken('/mnt/data/MARCEL/datasets/Kraken', max_num_conformers=self.hparams.max_num_conformers).shuffle()
             elif self.hparams.dataset == 'BDE':
-                dataset = BDE('/mnt/data/MARCEL/datasets/BDE', chiro_data = chiro_data).shuffle()
+                dataset = BDE('/mnt/data/MARCEL/datasets/BDE').shuffle()
                 self.variable_name = 'is_ligand'
                 unique_variables = 2
             elif self.hparams.dataset == 'tmQMg':
-                dataset = tmQMg('/mnt/data/MARCEL/datasets/tmQMg', chiro_data = chiro_data).shuffle()
+                dataset = tmQMg('/mnt/data/MARCEL/datasets/tmQMg').shuffle()
                 unique_variables = 1
             elif self.hparams.dataset == 'EE':
-                dataset = EE('/mnt/data/MARCEL/datasets/EE', max_num_conformers=self.hparams.max_num_conformers, chiro_data = chiro_data).shuffle()
+                dataset = EE('/mnt/data/MARCEL/datasets/EE', max_num_conformers=self.hparams.max_num_conformers).shuffle()
                 self.variable_name = 'config_id'
                 unique_variables = 2
 
@@ -130,31 +129,26 @@ class DataModule(LightningDataModule):
         if stage in self._saved_dataloaders and store_dataloader:
             return self._saved_dataloaders[stage]
 
-        if self.hparams.model3d_augmentation:
-            strategy = 'random'
-        else:
-            strategy = 'first'
+        strategy = 'all'
             
         if stage == "train":
             shuffle=True                              
         else:
             shuffle=False
-            if stage == "train"=='test':
-                strategy = 'first'
 
         if self.variable_name is None:
             dl = DataLoader(dataset, batch_sampler=EnsembleSampler(dataset, 
                                                                    batch_size=self.hparams.batch_size, 
                                                                    strategy=strategy, 
                                                                    shuffle=shuffle),
-                           num_workers=80)
+                           num_workers=20)
         else:
             dl = MultiBatchLoader(dataset, batch_sampler=EnsembleMultiBatchSampler(dataset, 
                                                                                    batch_size=self.hparams.batch_size, 
                                                                                    strategy=strategy, 
                                                                                    shuffle=shuffle, 
                                                                                    variable_name=self.variable_name),
-                                 num_workers=80)
+                                 num_workers=20)
         if store_dataloader:
             self._saved_dataloaders[stage] = dl
         return dl
@@ -178,48 +172,66 @@ def compute_gnorm(model: nn.Module) -> float:
     return math.sqrt(sum([p.grad.norm().item() ** 2 for p in model.parameters() if p.grad is not None]))
 
 class ModelLM(LightningModule):
-    def __init__(self, max_atomic_num=None, whole_dataset = None, unique_variables=1, multitask = False, **kwargs):
+    def __init__(self, whole_dataset = None, unique_variables=1, multitask = False, **kwargs):
         super().__init__()
         #self.kwargs.update(kwargs.__dict__) if hasattr(kwargs, "__dict__") else self.kwargs.update(kwargs)
-        print(kwargs.get('model3d'))
-        if kwargs.get('model3d').model == 'SchNet':
-            model_factory = lambda: SchNet(max_atomic_num=max_atomic_num, 
-                                           **asdict(kwargs.get('model3d').schnet))
-        elif kwargs.get('model3d').model == 'DimeNet':
-            model_factory = lambda: DimeNet(max_atomic_num=max_atomic_num, 
-                                            **asdict(kwargs.get('model3d').dimenet))
-        elif kwargs.get('model3d').model == 'DimeNet++':
-            model_factory = lambda: DimeNetPlusPlus(max_atomic_num=max_atomic_num, 
-                                                    **asdict(kwargs.get('model3d').dimenetplusplus))
-        elif kwargs.get('model3d').model == 'GemNet':
-            model_factory = lambda: GemNetT(max_atomic_num=max_atomic_num, 
-                                            **asdict(kwargs.get('model3d').gemnet))
-        elif kwargs.get('model3d').model == 'ChIRo':
-            model_factory = lambda: ChIRo(**asdict(kwargs.get('model3d').chiro))
+        #print(kwargs.get('model4d'))
+
+        max_atomic_num = whole_dataset.data.x[:, 0].max().item() + 1
+        
+        if kwargs.get('model4d').model == 'SchNet':
+            graph_model_factory = lambda: SchNet(max_atomic_num=max_atomic_num, 
+                                           **asdict(kwargs.get('model4d').schnet))
+        elif kwargs.get('model4d').model == 'DimeNet':
+            graph_model_factory = lambda: DimeNet(max_atomic_num=max_atomic_num, 
+                                            **asdict(kwargs.get('model4d').dimenet))
+        elif kwargs.get('model4d').model == 'DimeNet++':
+            graph_model_factory = lambda: DimeNetPlusPlus(max_atomic_num=max_atomic_num, 
+                                                    **asdict(kwargs.get('model4d').dimenetplusplus))
+        elif kwargs.get('model4d').model == 'GemNet':
+            graph_model_factory = lambda: GemNetT(max_atomic_num=max_atomic_num, 
+                                            **asdict(kwargs.get('model4d').gemnet))
+        elif kwargs.get('model4d').model == 'ChIRo':
+            graph_model_factory = lambda: ChIRo(**asdict(kwargs.get('model4d').chiro))
             
-        elif kwargs.get('model3d').model == 'PaiNN':
-            model_factory = lambda: PaiNN(max_atomic_num=max_atomic_num, 
-                                          **asdict(kwargs.get('model3d').painn))
-        elif kwargs.get('model3d').model == 'ClofNet':
-            model_factory = lambda: ClofNet(max_atomic_num=max_atomic_num, 
-                                            **asdict(kwargs.get('model3d').clofnet))
-        elif kwargs.get('model3d').model == 'LEFTNet':
-            model_factory = lambda: LEFTNet(max_atomic_num=max_atomic_num, 
-                                            **asdict(kwargs.get('model3d').leftnet))
-        elif kwargs.get('model3d').model == 'ChytorchDiscrete':
-            model_factory = lambda: ChytorchDiscrete(max_neighbors=max_atomic_num, 
-                                                     **asdict(kwargs.get('model3d').chytorch_discrete))
-        elif kwargs.get('model3d').model == 'ChytorchConformer':
-            model_factory = lambda: ChytorchConformer(**asdict(kwargs.get('model3d').chytorch_conformer))
+        elif kwargs.get('model4d').model == 'PaiNN':
+            graph_model_factory = lambda: PaiNN(max_atomic_num=max_atomic_num, 
+                                          **asdict(kwargs.get('model4d').painn))
+        elif kwargs.get('model4d').model == 'ClofNet':
+            graph_model_factory = lambda: ClofNet(max_atomic_num=max_atomic_num, 
+                                            **asdict(kwargs.get('model4d').clofnet))
+        elif kwargs.get('model4d').model == 'LEFTNet':
+            graph_model_factory = lambda: LEFTNet(max_atomic_num=max_atomic_num, 
+                                            **asdict(kwargs.get('model4d').leftnet))
+        elif kwargs.get('model4d').model == 'ChytorchDiscrete':
+            graph_model_factory = lambda: ChytorchDiscrete(max_neighbors=max_atomic_num, 
+                                                     **asdict(kwargs.get('model4d').chytorch_discrete))
+        elif kwargs.get('model4d').model == 'ChytorchConformer':
+            graph_model_factory = lambda: ChytorchConformer(**asdict(kwargs.get('model4d').chytorch_conformer))
             
-        elif kwargs.get('model3d').model == 'ChytorchRotary':
-            model_factory = lambda: ChytorchRotary(max_neighbors=max_atomic_num, 
-                                                   **asdict(kwargs.get('model3d').chytorch_rotary))
+        elif kwargs.get('model4d').model == 'ChytorchRotary':
+            graph_model_factory = lambda: ChytorchRotary(max_neighbors=max_atomic_num, 
+                                                   **asdict(kwargs.get('model4d').chytorch_rotary))
+
+        if kwargs.get('model4d').set_encoder == 'Sum':
+            set_model_factory = lambda: SumPooling()
+        elif kwargs.get('model4d').set_encoder == 'Mean':
+            set_model_factory = lambda: MeanPooling()
+        elif kwargs.get('model4d').set_encoder == 'DeepSets':
+            set_model_factory = lambda: DeepSets(hidden_dim=kwargs.get('hidden_dim'))
+        elif kwargs.get('model4d').set_encoder == 'Attention':
+            set_model_factory = lambda: SelfAttentionPooling(hidden_dim=kwargs.get('hidden_dim'))
+        elif kwargs.get('model4d').set_encoder == 'Transformer':
+            set_model_factory = lambda: TransformerPooling(
+                hidden_dim=kwargs.get('hidden_dim'), **asdict(kwargs.get('model4d').transformer))
+
+        
         self.device_= torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.multitask = multitask
-        self.net = Model3D(model_factory, 
-                           hidden_dim=kwargs.get('hidden_dim'), 
-                           out_dim=1,
+        
+        self.net = Model4D(hidden_dim=kwargs.get('hidden_dim'), out_dim=1,
+                           graph_model_factory=graph_model_factory,
+                           set_model_factory=set_model_factory,
                            unique_variables=unique_variables, 
                            device='cuda',
                            multitask=self.multitask).to('cuda')
@@ -233,7 +245,7 @@ class ModelLM(LightningModule):
             self.loss_fn = nn.MSELoss() #LOGITS #GroupedScaledMAELoss(torch.ones(4, dtype=torch.long))
         
         self.lr = kwargs.get('learning_rate')
-        self.wd = kwargs.get('weight_decay')
+        self.wd = kwargs.get('learning_rate')
         
         self._reset_losses_dict()
         self._reset_inference_results()
@@ -241,8 +253,8 @@ class ModelLM(LightningModule):
                                           "model1d","model2d","model3d","model4d","modelfprf","one_cycle_lr",
                                           "reduce_lr_on_plateau","whole_dataset","device","scheduler"])
 
-    def forward(self, batch):
-        out = self.net(batch)
+    def forward(self, batch, molecule_indices):
+        out = self.net(batch, molecule_indices)
         return out
         
     def configure_optimizers(self):
@@ -271,9 +283,12 @@ class ModelLM(LightningModule):
         start = time()
         if type(batch) is not list:
             batch = [batch]
-        molecule_idx = batch[0].molecule_idx.to('cuda')
+        molecule_indices = [reorder_molecule_idx(batch[i].molecule_idx).to('cuda') for i in range(len(batch))]
+        #molecule_idx = batch[0].molecule_idx.to('cuda')
+
+        unique_raw_molecule_idx = torch.unique_consecutive(batch[0].molecule_idx)
         dataset = self.whole_dataset.y.to('cuda')
-        targets = dataset[molecule_idx].squeeze()
+        targets = dataset[unique_raw_molecule_idx].squeeze()
 
         with torch.set_grad_enabled(stage == "train"):
             if self.multitask:
@@ -293,7 +308,8 @@ class ModelLM(LightningModule):
                                       device=targets.device)
                 for cnt, bat_i in enumerate(batch_multi):
                     batch_multi[cnt].tokens = prompts
-                pred = self(batch_multi)
+                
+                pred = self(batch_multi, molecule_indices)
                 loss = self.loss_fn(pred.squeeze(), targets_flat, prompts)
                 if stage == "test":
                     self.inference_results['token'].append(prompts.squeeze())
@@ -302,7 +318,7 @@ class ModelLM(LightningModule):
                     return None
                 r2=r2_score_torch(targets_flat.cpu(),pred.squeeze().cpu().detach())
             else:
-                pred = self(batch)
+                pred = self(batch, molecule_indices)
                 loss = self.loss_fn(pred.squeeze(), targets)
             
                 if stage == "test":
@@ -376,6 +392,7 @@ def parse_args():
     parser.add_argument("--dataname", type=str, default="BDE", help="Whether to consider chirality")
     parser.add_argument("--target", type=str, default="BindingEnergy", help="Type of chirality")
     parser.add_argument("--modeltype", type=str, default="ClofNet", help="Masked fraction")
+    parser.add_argument("--set_encoder", type=str, default="Mean", help="Masked fraction")
     return parser.parse_args()
 
 def config_to_dict(config_class):
@@ -397,18 +414,19 @@ def main():
     dataname = args.dataname
     target = args.target
     modeltype = args.modeltype
+    set_encoder = args.set_encoder
 
     config = Config
-    if modeltype=='ChIRo':
-        config.max_num_conformers=19
     config.dataset = dataname
-    config.target = target
+    config.target = 'all'
     config.device = 'cuda:0'
+    config.batch_size = 64
     
     
     ######3DMODEL
-    config.model3d.model=modeltype
-    config.model3d.augmentation = True
+    config.model4d.model=modeltype
+    config.model4d.augmentation = True
+    config.model4d.set_encoder = set_encoder
 
     config_dict = config_to_dict(config)
     subkeys = ["dataset",
@@ -417,27 +435,28 @@ def main():
                "train_ratio",
                "valid_ratio",
                "seed",
-               "model3d", #.augmentation"
+               "model4d", #.augmentation"
                "batch_size"]
     config_dict_datamodule = {}
     for k,v in config_dict.items():
         if k in subkeys:
-            if k=="model3d":
+            if k=="model4d":
                 config_dict_datamodule[f'{k}_augmentation']=config_dict[k].augmentation
             else:
                 config_dict_datamodule[k]=v
 
-    data = DataModule(config_dict_datamodule, multitask = False, chiro_data = modeltype=='ChIRo')
+    data = DataModule(config_dict_datamodule, multitask = False)
     data.prepare_data()
     data.split_compute()
 
     model = ModelLM(max_atomic_num=data.max_atomic_num, 
-                    whole_dataset = data.dataset, 
-                    unique_variables=data.unique_variables, **config_dict)
-
+                whole_dataset = data.dataset, 
+                unique_variables=data.unique_variables, 
+                multitask = False, **config_dict)
+    
     print(f'#PARAMS = {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
     
-    dir_name = f"log_3D_singletask_{dataname}_{target}_{modeltype}_v0"
+    dir_name = f"log_4d_singletask_{dataname}_{target}_{modeltype}_{set_encoder}_v0"
 
     dir_load_model = None
     log_dir_folder = '/mnt/code/logs/'
@@ -513,11 +532,19 @@ def main():
     )
 
     test_trainer.test(model=model, ckpt_path=checkpoint_path, datamodule=data)
-    perf_dict = {'y_true': model.inference_results['y_true'].cpu().numpy(), 
+    perf_dict = {'token': model.inference_results['token'].cpu().numpy(),
+                 'y_true': model.inference_results['y_true'].cpu().numpy(), 
                  'y_pred': model.inference_results['y_pred'].cpu().numpy()}
     r2test = r2_score(perf_dict['y_true'], perf_dict['y_pred'])
+    res_df = pd.DataFrame(perf_dict)
+    r2_str = ''
+    for i,lab in zip(list(res_df['token'].unique()), data.dataset.descriptors):
+        r2test_i = r2_score(res_df[res_df['token']==i]['y_true'], 
+                            res_df[res_df['token']==i]['y_pred'])
+        print(f'{lab} R2 = {str(r2test_i)[:4]}')
+        r2_str+= f'_{lab}_{str(r2test_i)[:4]}'
     #mae_test = mean_absolute_error(perf_dict['y_true'], perf_dict['y_pred'])
-    pd.DataFrame(perf_dict).to_csv(log_dir_folder+f'/test_pred_ba_chi_{str(r2test)[:4]}.csv')
+    pd.DataFrame(perf_dict).to_csv(log_dir_folder+f'/test_pred_ba_chi_{str(r2test)[:4]}_{r2_str}.csv')
     print(f"R2 = {str(r2test)[:4]}")
     perf_dict=[]
     torch.cuda.empty_cache()
@@ -569,6 +596,8 @@ if __name__ == '__main__':
     from torch.optim import AdamW
     from torch.optim.lr_scheduler import CyclicLR, CosineAnnealingLR
     from torch_geometric.loader import DataLoader
+    from models.model_4d import Model4D, SumPooling, MeanPooling, TransformerPooling, DeepSets, SelfAttentionPooling
+    from loaders.utils import reorder_molecule_idx
 
 
     main()
