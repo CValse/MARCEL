@@ -401,7 +401,7 @@ def main():
     config.dataset = dataname
     config.target = 'all'
     config.device = 'cuda:0'
-    config.batch_size
+    config.batch_size = 64
     
     
     ######3DMODEL
