@@ -4,6 +4,15 @@ import pandas as pd
 from torch.utils.data import Dataset, DataLoader, random_split
 from pytorch_lightning import LightningModule, Trainer, LightningDataModule
 import torch.nn as nn
+
+import torch
+import torch.nn.functional as F
+
+from dataclasses import asdict
+from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CyclicLR, CosineAnnealingLR
 ###################################################
 import os
 import numpy as np
@@ -464,14 +473,9 @@ if __name__ == '__main__':
     install_torch('torch-geometric')
     install('transformers')
 
-    import torch
-    import torch.nn.functional as F
     
-    from dataclasses import asdict
     from transformers import RobertaTokenizer
     #from pl_bolts.optimizers import LinearWarmupCosineAnnealingLR
-    from torch.utils.tensorboard import SummaryWriter
-    from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
     
     from config import Config
     from data.ee import EE
@@ -489,11 +493,6 @@ if __name__ == '__main__':
     from pytorch_lightning.callbacks import EarlyStopping
     from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
     import pytorch_lightning as pl
-    
-    
-    
-    from torch.optim import AdamW
-    from torch.optim.lr_scheduler import CyclicLR, CosineAnnealingLR
 
 
     main()
