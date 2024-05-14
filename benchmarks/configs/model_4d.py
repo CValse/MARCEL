@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from configs.model_3d import SchNet, DimeNet, DimeNetPlusPlus, GemNet, PaiNN, ClofNet
+from configs.model_3d import SchNet, DimeNet, DimeNetPlusPlus, GemNet, PaiNN, ClofNet,ChytorchDiscrete,ChIRo
 
 
 @dataclass
@@ -20,5 +20,7 @@ class Model4D:
     gemnet: GemNet = GemNet()
     painn: PaiNN = PaiNN()
     clofnet: ClofNet = ClofNet()
+    chiro: ChIRo = ChIRo()
+    chytorch_discrete: ChytorchDiscrete = ChytorchDiscrete()
 
     transformer: TransformerPooling = TransformerPooling()

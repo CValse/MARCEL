@@ -26,7 +26,7 @@ class GPS(torch.nn.Module):
                 Linear(hidden_dim, hidden_dim),
                 self.act,
             )
-            conv = GPSConv(hidden_dim, GINEConv(nn), heads=num_heads, attn_dropout=dropout)
+            conv = GPSConv(hidden_dim, GINEConv(nn), heads=num_heads, dropout=dropout)
             self.conv.append(conv)
 
     def forward(self, data):

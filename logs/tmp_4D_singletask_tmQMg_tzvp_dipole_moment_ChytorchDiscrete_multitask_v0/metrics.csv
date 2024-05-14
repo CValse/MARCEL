@@ -1,0 +1,14 @@
+(training) gnorm,(training) pnorm,epoch,lr,step,train_epoch_loss,train_epoch_r2,train_epoch_time,train_step_loss,val_epoch_loss,val_epoch_r2,val_epoch_time
+nan,nan,0,0.0009607999818399549,49,,,,nan,,,
+nan,nan,0,0.0009208000265061855,99,,,,nan,,,
+nan,nan,0,0.0008808000129647553,149,,,,nan,,,
+nan,nan,0,0.0008407999994233251,199,,,,nan,,,
+nan,nan,0,0.0008007999858818948,249,,,,nan,,,
+nan,nan,0,0.0007607999723404646,299,,,,nan,,,
+nan,nan,0,0.0007208000170066953,349,,,,nan,,,
+nan,nan,0,0.000680800003465265,399,,,,nan,,,
+nan,nan,0,0.0006407999899238348,449,,,,nan,,,
+nan,nan,0,0.0006007999763824046,499,,,,nan,,,
+nan,nan,0,0.0005608000210486352,549,,,,nan,,,
+nan,nan,0,0.000520800007507205,599,,,,nan,,,
+,,0.0,,618,nan,nan,69.61148071289062,,nan,nan,9.834385871887207

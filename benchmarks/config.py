@@ -43,7 +43,7 @@ class Config:
     batch_size: int = 256
     hidden_dim: int = 128
     num_epochs: int = 2000
-    patience: int = 200
+    patience: int = 50
     activation: str = 'relu'
     seed: int = 123
     device: str = 'cuda:5'
