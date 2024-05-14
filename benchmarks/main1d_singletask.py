@@ -370,7 +370,7 @@ def main():
 
     print(f'#PARAMS = {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
     
-    dir_name = f"log_1D_{dataname}_{target}_{modeltype}_v0"
+    dir_name = f"log_1D_{dataname}_{target}_{modeltype}_{input_type}_v0"
 
     dir_load_model = None
     log_dir_folder = '/mnt/code/logs/'
