@@ -439,7 +439,7 @@ def main():
     dir_name = f"log_multitask_{dataname}_{target}_{modeltype}_v0"
 
     dir_load_model = None
-    log_dir_folder = '/mnt/code/out_logs/'
+    log_dir_folder = '/mnt/artifacts/out_logs/'
     log_dir_folder = os.path.join(log_dir_folder, dir_name)
     if os.path.exists(log_dir_folder):
         if os.path.exists(os.path.join(log_dir_folder, "last.ckpt")):
