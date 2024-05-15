@@ -12,6 +12,7 @@ import pandas as pd
 import torch.nn as nn
 
 from pytorch_lightning import LightningModule, Trainer, LightningDataModule
+
 from models.model_3d import GroupedScaledMAELoss
 
 ###################################################
@@ -56,7 +57,7 @@ def r2_score_torch(y_true, y_pred):
     return r2.item()
 
 class DataModule(LightningDataModule):
-    def __init__(self, hparams, dataset=None, multitask = False):
+    def __init__(self, hparams, dataset=None, multitask = False, chiro_data = False):
         super().__init__()
         self.hparams.update(hparams.__dict__) if hasattr(hparams, "__dict__") else self.hparams.update(hparams)
         self._saved_dataloaders = dict()
@@ -68,18 +69,18 @@ class DataModule(LightningDataModule):
             unique_variables = 1
 
             if self.hparams.dataset == 'Drugs':
-                dataset = Drugs('/mnt/data/MARCEL/datasets/Drugs', max_num_conformers=self.hparams.max_num_conformers).shuffle()
+                dataset = Drugs('/mnt/data/MARCEL/datasets/Drugs', max_num_conformers=self.hparams.max_num_conformers, chiro_data = chiro_data).shuffle()
             elif self.hparams.dataset == 'Kraken':
-                dataset = Kraken('/mnt/data/MARCEL/datasets/Kraken', max_num_conformers=self.hparams.max_num_conformers).shuffle()
+                dataset = Kraken('/mnt/data/MARCEL/datasets/Kraken', max_num_conformers=self.hparams.max_num_conformers, chiro_data = chiro_data).shuffle()
             elif self.hparams.dataset == 'BDE':
-                dataset = BDE('/mnt/data/MARCEL/datasets/BDE').shuffle()
+                dataset = BDE('/mnt/data/MARCEL/datasets/BDE', chiro_data = chiro_data).shuffle()
                 self.variable_name = 'is_ligand'
                 unique_variables = 2
             elif self.hparams.dataset == 'tmQMg':
-                dataset = tmQMg('/mnt/data/MARCEL/datasets/tmQMg').shuffle()
+                dataset = tmQMg('/mnt/data/MARCEL/datasets/tmQMg', chiro_data = chiro_data).shuffle()
                 unique_variables = 1
             elif self.hparams.dataset == 'EE':
-                dataset = EE('/mnt/data/MARCEL/datasets/EE', max_num_conformers=self.hparams.max_num_conformers).shuffle()
+                dataset = EE('/mnt/data/MARCEL/datasets/EE', max_num_conformers=self.hparams.max_num_conformers, chiro_data = chiro_data).shuffle()
                 self.variable_name = 'config_id'
                 unique_variables = 2
 
@@ -146,14 +147,14 @@ class DataModule(LightningDataModule):
                                                                    batch_size=self.hparams.batch_size, 
                                                                    strategy=strategy, 
                                                                    shuffle=shuffle),
-                           num_workers=20)
+                           num_workers=80)
         else:
             dl = MultiBatchLoader(dataset, batch_sampler=EnsembleMultiBatchSampler(dataset, 
                                                                                    batch_size=self.hparams.batch_size, 
                                                                                    strategy=strategy, 
                                                                                    shuffle=shuffle, 
                                                                                    variable_name=self.variable_name),
-                                 num_workers=20)
+                                 num_workers=80)
         if store_dataloader:
             self._saved_dataloaders[stage] = dl
         return dl
@@ -287,7 +288,7 @@ class ModelLM(LightningModule):
                             batch_multi[cnt].batch = torch.hstack([bat_tmp, batch[cnt].batch + (bat_tmp.max()+1)])
                 
                 targets_flat = targets.flatten()
-                prompts = torch.tensor([i for i in range(self.whole_dataset.y.shape[1])]*targets.shape[0],
+                prompts = torch.tensor([i for i in range(data.dataset.y.shape[1])]*targets.shape[0],
                                       dtype=torch.int32,
                                       device=targets.device)
                 for cnt, bat_i in enumerate(batch_multi):
@@ -398,10 +399,11 @@ def main():
     modeltype = args.modeltype
 
     config = Config
+    if modeltype=='ChIRo':
+        config.max_num_conformers=19
     config.dataset = dataname
-    config.target = 'all'
+    config.target = target
     config.device = 'cuda:0'
-    config.batch_size = 64
     
     
     ######3DMODEL
@@ -425,21 +427,20 @@ def main():
             else:
                 config_dict_datamodule[k]=v
 
-    data = DataModule(config_dict_datamodule, multitask = True)
+    data = DataModule(config_dict_datamodule, multitask = False, chiro_data = modeltype=='ChIRo')
     data.prepare_data()
     data.split_compute()
 
     model = ModelLM(max_atomic_num=data.max_atomic_num, 
-                whole_dataset = data.dataset, 
-                unique_variables=data.unique_variables, 
-                multitask = True, **config_dict)
-    
+                    whole_dataset = data.dataset, 
+                    unique_variables=data.unique_variables, **config_dict)
+
     print(f'#PARAMS = {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
     
-    dir_name = f"log_multitask_{dataname}_{target}_{modeltype}_v0"
+    dir_name = f"log_3D_singletask_{dataname}_{target}_{modeltype}_v0"
 
     dir_load_model = None
-    log_dir_folder = '/mnt/artifacts/out_logs/'
+    log_dir_folder = '/mnt/code/logs/'
     log_dir_folder = os.path.join(log_dir_folder, dir_name)
     if os.path.exists(log_dir_folder):
         if os.path.exists(os.path.join(log_dir_folder, "last.ckpt")):
@@ -512,19 +513,11 @@ def main():
     )
 
     test_trainer.test(model=model, ckpt_path=checkpoint_path, datamodule=data)
-    perf_dict = {'token': model.inference_results['token'].cpu().numpy(),
-                 'y_true': model.inference_results['y_true'].cpu().numpy(), 
+    perf_dict = {'y_true': model.inference_results['y_true'].cpu().numpy(), 
                  'y_pred': model.inference_results['y_pred'].cpu().numpy()}
     r2test = r2_score(perf_dict['y_true'], perf_dict['y_pred'])
-    res_df = pd.DataFrame(perf_dict)
-    r2_str = ''
-    for i,lab in zip(list(res_df['token'].unique()), data.dataset.descriptors):
-        r2test_i = r2_score(res_df[res_df['token']==i]['y_true'], 
-                            res_df[res_df['token']==i]['y_pred'])
-        print(f'{lab} R2 = {str(r2test_i)[:4]}')
-        r2_str+= f'_{lab}_{str(r2test_i)[:4]}'
     #mae_test = mean_absolute_error(perf_dict['y_true'], perf_dict['y_pred'])
-    pd.DataFrame(perf_dict).to_csv(log_dir_folder+f'/test_pred_ba_chi_{str(r2test)[:4]}_{r2_str}.csv')
+    pd.DataFrame(perf_dict).to_csv(log_dir_folder+f'/test_pred_ba_chi_{str(r2test)[:4]}.csv')
     print(f"R2 = {str(r2test)[:4]}")
     perf_dict=[]
     torch.cuda.empty_cache()

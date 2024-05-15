@@ -1,19 +1,19 @@
-import os
-import torch
-import torch.nn.functional as F
-import gc
 import pip
-
+import gc
 import argparse
-from dataclasses import asdict
-
-from sklearn.metrics import r2_score
 import pandas as pd
+from torch.utils.data import Dataset, DataLoader, random_split
+from pytorch_lightning import LightningModule, Trainer, LightningDataModule
 import torch.nn as nn
 
-from pytorch_lightning import LightningModule, Trainer, LightningDataModule
-from models.model_3d import GroupedScaledMAELoss
+import torch
+import torch.nn.functional as F
 
+from dataclasses import asdict
+from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CyclicLR, CosineAnnealingLR
 ###################################################
 import os
 import numpy as np
@@ -32,6 +32,28 @@ if torch.cuda.is_available():
 
 np.random.seed(seed)
 ################################################## 
+
+class Molecules(Dataset):
+    def __init__(self, smiles_ids, attention_masks, labels, fingerprint=None, input_type='smiles'):
+        self.smiles_ids = smiles_ids
+        self.attention_masks = attention_masks
+        self.labels = labels
+        self.fingerprint = fingerprint
+        self.input_type = input_type
+
+    def __len__(self):
+        return self.labels.shape[0]
+
+    def __getitem__(self, index):
+        if self.input_type == 'SMILES':
+            smiles = self.smiles_ids[index]
+            attention_mask = self.attention_masks[index]
+            y = self.labels[index]
+            return smiles, attention_mask, y.clone()
+        else:
+            fingerprint = self.fingerprint[index]
+            y = self.labels[index]
+            return torch.tensor(fingerprint, dtype=torch.long), y.clone()
 
 def r2_score_torch(y_true, y_pred):
     """
@@ -56,62 +78,67 @@ def r2_score_torch(y_true, y_pred):
     return r2.item()
 
 class DataModule(LightningDataModule):
-    def __init__(self, hparams, dataset=None, multitask = False):
+    def __init__(self, hparams, dataset=None):
         super().__init__()
         self.hparams.update(hparams.__dict__) if hasattr(hparams, "__dict__") else self.hparams.update(hparams)
         self._saved_dataloaders = dict()
         self.dataset = dataset
-        self.multitask = multitask
         
         if self.dataset is None:
-            self.variable_name = None
+            variable_name = None
             unique_variables = 1
-
+            
             if self.hparams.dataset == 'Drugs':
                 dataset = Drugs('/mnt/data/MARCEL/datasets/Drugs', max_num_conformers=self.hparams.max_num_conformers).shuffle()
             elif self.hparams.dataset == 'Kraken':
                 dataset = Kraken('/mnt/data/MARCEL/datasets/Kraken', max_num_conformers=self.hparams.max_num_conformers).shuffle()
             elif self.hparams.dataset == 'BDE':
                 dataset = BDE('/mnt/data/MARCEL/datasets/BDE').shuffle()
-                self.variable_name = 'is_ligand'
+                variable_name = 'is_ligand'
                 unique_variables = 2
-            elif self.hparams.dataset == 'tmQMg':
-                dataset = tmQMg('/mnt/data/MARCEL/datasets/tmQMg').shuffle()
-                unique_variables = 1
             elif self.hparams.dataset == 'EE':
                 dataset = EE('/mnt/data/MARCEL/datasets/EE', max_num_conformers=self.hparams.max_num_conformers).shuffle()
-                self.variable_name = 'config_id'
+                variable_name = 'config_id'
                 unique_variables = 2
-
-            if self.multitask:
-                self.hparams.target = 'all'
-                pass
+            
+            #autoscaling
+            target_id = dataset.descriptors.index(self.hparams.target)
+            labels = dataset.y[:, target_id]
+            mean = labels.mean(dim=0).item()
+            std = labels.std(dim=0).item()
+            labels = (labels - mean) / std
+            
+            if variable_name is not None:
+                smiles = concatenate_smiles(dataset, variable_name)
             else:
-                #autoscaling
-                target_id = dataset.descriptors.index(self.hparams.target)
-                dataset.y = dataset.y[:, target_id]
-                #mean = dataset.y.mean(dim=0, keepdim=True)
-                #std = dataset.y.std(dim=0, keepdim=True)
-                #dataset.y = ((dataset.y - mean) / std).to('cuda')
-                #mean = mean.to('cuda')
-                #std = std.to('cuda')
-            
-                #data.dataset.data.y = data.dataset.y
-            
+                smiles = construct_smiles(dataset)
+            fingerprint = construct_fingerprint(smiles) if self.hparams.model1d_input_type == 'Fingerprint' else None
+
+            tokenizer = RobertaTokenizer.from_pretrained('seyonec/PubChem10M_SMILES_BPE_450k')
+            dicts = tokenizer(smiles, return_tensors='pt', padding='longest')
+            smiles_ids, attention_masks = dicts['input_ids'], dicts['attention_mask']
+            vocab_size = tokenizer.vocab_size if self.hparams.model1d_input_type == 'SMILES' else fingerprint.shape[1]
+
+            dataset = Molecules(smiles_ids, attention_masks, labels, fingerprint, input_type=self.hparams.model1d_input_type)
+
             self.dataset = dataset
-            self.max_atomic_num = self.dataset.data.x[:, 0].max().item() + 1
-            self.unique_variables = unique_variables
+            self.vocab_size=vocab_size
+            self.tokenizer=tokenizer
+            self.smiles_ids=smiles_ids
+            #modelnet = model.to(device)
+
             print('--done---')
 
     def split_compute(self):
+        train_ratio = self.hparams.train_ratio
+        valid_ratio = self.hparams.valid_ratio
+        test_ratio = 1 - train_ratio - valid_ratio
 
-        split = self.dataset.get_idx_split(train_ratio=self.hparams.train_ratio, 
-                                      valid_ratio=self.hparams.valid_ratio, 
-                                      seed=self.hparams.seed)
-        self.train_dataset = self.dataset[split['train']]
-        self.valid_dataset = self.dataset[split['valid']]
-        self.test_dataset = self.dataset[split['test']]
+        train_len = int(train_ratio * len(self.dataset))
+        valid_len = int(valid_ratio * len(self.dataset))
+        test_len = len(self.dataset) - train_len - valid_len
 
+        self.train_dataset, self.valid_dataset, self.test_dataset = random_split(self.dataset, lengths=[train_len, valid_len, test_len])
         print(f'{len(self.train_dataset)} training data, {len(self.test_dataset)} test data and {len(self.valid_dataset)} validation data')
 
     def train_dataloader(self):
@@ -129,31 +156,11 @@ class DataModule(LightningDataModule):
         if stage in self._saved_dataloaders and store_dataloader:
             return self._saved_dataloaders[stage]
 
-        if self.hparams.model3d_augmentation:
-            strategy = 'random'
-        else:
-            strategy = 'first'
-            
         if stage == "train":
-            shuffle=True                              
+            dl = DataLoader(dataset=dataset, batch_size=self.hparams.batch_size, shuffle=True, num_workers = 20)                                  
         else:
-            shuffle=False
-            if stage == "train"=='test':
-                strategy = 'first'
+            dl = DataLoader(dataset=dataset, batch_size=self.hparams.batch_size, shuffle=False, num_workers = 20) 
 
-        if self.variable_name is None:
-            dl = DataLoader(dataset, batch_sampler=EnsembleSampler(dataset, 
-                                                                   batch_size=self.hparams.batch_size, 
-                                                                   strategy=strategy, 
-                                                                   shuffle=shuffle),
-                           num_workers=20)
-        else:
-            dl = MultiBatchLoader(dataset, batch_sampler=EnsembleMultiBatchSampler(dataset, 
-                                                                                   batch_size=self.hparams.batch_size, 
-                                                                                   strategy=strategy, 
-                                                                                   shuffle=shuffle, 
-                                                                                   variable_name=self.variable_name),
-                                 num_workers=20)
         if store_dataloader:
             self._saved_dataloaders[stage] = dl
         return dl
@@ -176,64 +183,27 @@ def compute_gnorm(model: nn.Module) -> float:
     """
     return math.sqrt(sum([p.grad.norm().item() ** 2 for p in model.parameters() if p.grad is not None]))
 
-class ModelLM(LightningModule):
-    def __init__(self, max_atomic_num=None, whole_dataset = None, unique_variables=1, multitask = False, **kwargs):
+class Model1D(LightningModule):
+    def __init__(self, vocab_size=None, tokenizer=None, smiles_ids=None, **hparams):
         super().__init__()
-        #self.kwargs.update(kwargs.__dict__) if hasattr(kwargs, "__dict__") else self.kwargs.update(kwargs)
-        print(kwargs.get('model3d'))
-        if kwargs.get('model3d').model == 'SchNet':
-            model_factory = lambda: SchNet(max_atomic_num=max_atomic_num, 
-                                           **asdict(kwargs.get('model3d').schnet))
-        elif kwargs.get('model3d').model == 'DimeNet':
-            model_factory = lambda: DimeNet(max_atomic_num=max_atomic_num, 
-                                            **asdict(kwargs.get('model3d').dimenet))
-        elif kwargs.get('model3d').model == 'DimeNet++':
-            model_factory = lambda: DimeNetPlusPlus(max_atomic_num=max_atomic_num, 
-                                                    **asdict(kwargs.get('model3d').dimenetplusplus))
-        elif kwargs.get('model3d').model == 'GemNet':
-            model_factory = lambda: GemNetT(max_atomic_num=max_atomic_num, 
-                                            **asdict(kwargs.get('model3d').gemnet))
-        elif kwargs.get('model3d').model == 'ChIRo':
-            model_factory = lambda: ChIRo(**asdict(kwargs.get('model3d').chiro))
-            
-        elif kwargs.get('model3d').model == 'PaiNN':
-            model_factory = lambda: PaiNN(max_atomic_num=max_atomic_num, 
-                                          **asdict(kwargs.get('model3d').painn))
-        elif kwargs.get('model3d').model == 'ClofNet':
-            model_factory = lambda: ClofNet(max_atomic_num=max_atomic_num, 
-                                            **asdict(kwargs.get('model3d').clofnet))
-        elif kwargs.get('model3d').model == 'LEFTNet':
-            model_factory = lambda: LEFTNet(max_atomic_num=max_atomic_num, 
-                                            **asdict(kwargs.get('model3d').leftnet))
-        elif kwargs.get('model3d').model == 'ChytorchDiscrete':
-            model_factory = lambda: ChytorchDiscrete(max_neighbors=max_atomic_num, 
-                                                     **asdict(kwargs.get('model3d').chytorch_discrete))
-        elif kwargs.get('model3d').model == 'ChytorchConformer':
-            model_factory = lambda: ChytorchConformer(**asdict(kwargs.get('model3d').chytorch_conformer))
-            
-        elif kwargs.get('model3d').model == 'ChytorchRotary':
-            model_factory = lambda: ChytorchRotary(max_neighbors=max_atomic_num, 
-                                                   **asdict(kwargs.get('model3d').chytorch_rotary))
+        #self.hparams.update(hparams.__dict__) if hasattr(hparams, "__dict__") else self.hparams.update(hparams)
+        
+        if hparams.get('model1d').model == 'LSTM':
+            self.net = LSTM(
+                vocab_size, hparams.get('hidden_dim'), hparams.get('hidden_dim'), 1,
+                hparams.get('model1d').num_layers, hparams.get('dropout'), padding_idx=tokenizer.pad_token_id)
+        elif hparams.get('model1d').model == 'Transformer':
+            self.net = Transformer(
+                vocab_size, hparams.get('model1d').embedding_dim, smiles_ids.shape[1],
+                hparams.get('model1d').num_heads, hparams.get('hidden_dim'), 1,
+                hparams.get('model1d').num_layers, hparams.get('dropout'), padding_idx=tokenizer.pad_token_id)
+                
+        self.loss_fn = nn.MSELoss() #LOGITS #GroupedScaledMAELoss(torch.ones(4, dtype=torch.long))
         self.device_= torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.multitask = multitask
-        self.net = Model3D(model_factory, 
-                           hidden_dim=kwargs.get('hidden_dim'), 
-                           out_dim=1,
-                           unique_variables=unique_variables, 
-                           device='cuda',
-                           multitask=self.multitask).to('cuda')
-        
-        self.whole_dataset = whole_dataset
+        self.input_type = hparams.get('model1d').input_type
+        self.lr = hparams.get('learning_rate')
+        self.wd = hparams.get('weight_decay')
 
-        if self.multitask:
-            self.loss_fn = GroupedScaledMAELoss(torch.ones(self.whole_dataset.y.shape[1], 
-                                                           dtype=torch.long))
-        else:
-            self.loss_fn = nn.MSELoss() #LOGITS #GroupedScaledMAELoss(torch.ones(4, dtype=torch.long))
-        
-        self.lr = kwargs.get('learning_rate')
-        self.wd = kwargs.get('weight_decay')
-        
         self._reset_losses_dict()
         self._reset_inference_results()
         self.save_hyperparameters(ignore=["cosine_annealing_lr","linear_warmup_cosine_annealing_lr",
@@ -241,8 +211,16 @@ class ModelLM(LightningModule):
                                           "reduce_lr_on_plateau","whole_dataset","device","scheduler"])
 
     def forward(self, batch):
-        out = self.net(batch)
-        return out
+        if self.input_type == 'SMILES':
+            input_ids, attention_mask, y = batch
+            if isinstance(self.net, Transformer):
+                out = self.net(input_ids, attention_mask)
+            else:
+                out = self.net(input_ids)
+        else:
+            fingerprints, y = batch
+            out = self.net(fingerprints)
+        return out, y
         
     def configure_optimizers(self):
         o = AdamW(self.parameters(), lr=self.lr, weight_decay=self.wd)
@@ -268,48 +246,17 @@ class ModelLM(LightningModule):
         
     def step(self, batch, stage):
         start = time()
-        if type(batch) is not list:
-            batch = [batch]
-        molecule_idx = batch[0].molecule_idx.to('cuda')
-        dataset = self.whole_dataset.y.to('cuda')
-        targets = dataset[molecule_idx].squeeze()
 
         with torch.set_grad_enabled(stage == "train"):
-            if self.multitask:
-                batch_multi = batch.copy()
-                if self.whole_dataset.y.shape[1]==1:
-                    print('only one property-switch to singletask')
-                else:
-                    for cnt, bat_i in enumerate(batch_multi):
-                        for i in range(self.whole_dataset.y.shape[1]-1):
-                            bat_tmp = batch_multi[cnt].batch#.detach().clone()
-                            batch_multi[cnt] = batch_multi[cnt].concat(batch[cnt])
-                            batch_multi[cnt].batch = torch.hstack([bat_tmp, batch[cnt].batch + (bat_tmp.max()+1)])
-                
-                targets_flat = targets.flatten()
-                prompts = torch.tensor([i for i in range(self.whole_dataset.y.shape[1])]*targets.shape[0],
-                                      dtype=torch.int32,
-                                      device=targets.device)
-                for cnt, bat_i in enumerate(batch_multi):
-                    batch_multi[cnt].tokens = prompts
-                pred = self(batch_multi)
-                loss = self.loss_fn(pred.squeeze(), targets_flat, prompts)
-                if stage == "test":
-                    self.inference_results['token'].append(prompts.squeeze())
-                    self.inference_results['y_pred'].append(pred.squeeze())
-                    self.inference_results['y_true'].append(targets_flat.squeeze())
-                    return None
-                r2=r2_score_torch(targets_flat.cpu(),pred.squeeze().cpu().detach())
-            else:
-                pred = self(batch)
-                loss = self.loss_fn(pred.squeeze(), targets)
+            pred, targets = self(batch)
+            loss = self.loss_fn(pred.squeeze(), targets)
             
-                if stage == "test":
-                    self.inference_results['y_pred'].append(pred.squeeze())
-                    self.inference_results['y_true'].append(targets.squeeze())
-                    return None
+            if stage == "test":
+                self.inference_results['y_pred'].append(pred.squeeze())
+                self.inference_results['y_true'].append(targets.squeeze())
+                return None
 
-                r2=r2_score_torch(targets.cpu(),pred.squeeze().cpu().detach())
+            r2=r2_score_torch(targets.cpu(),pred.squeeze().cpu().detach())
 
             self.logging_info[f'{stage}_loss'].append(loss.item())
             self.logging_info[f'{stage}_r2'].append(r2)
@@ -318,7 +265,7 @@ class ModelLM(LightningModule):
             if stage == 'train':
                 self.log("lr", self.trainer.optimizers[0].param_groups[0]["lr"], on_step=True, on_epoch=False, prog_bar=True, logger=True, sync_dist=True)
                 self.log(f'{stage}_step_loss', loss.item(), on_step=True, on_epoch=False, prog_bar=True, logger=True, sync_dist=True)
-            #model.save_checkpoint('checkpoint.pth')
+
             return loss
         
     def on_validation_epoch_end(self):
@@ -354,8 +301,7 @@ class ModelLM(LightningModule):
         }
         
     def _reset_inference_results(self):
-        self.inference_results = {'token': [],
-                                  'y_pred': [],
+        self.inference_results = {'y_pred': [],
                                   'y_true': []}
 
 def install(package):
@@ -374,6 +320,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Your script description here")
     parser.add_argument("--dataname", type=str, default="BDE", help="Whether to consider chirality")
     parser.add_argument("--target", type=str, default="BindingEnergy", help="Type of chirality")
+    parser.add_argument("--input_type", type=str, default="SMILES", help="Masked fraction")
     parser.add_argument("--modeltype", type=str, default="ClofNet", help="Masked fraction")
     return parser.parse_args()
 
@@ -395,18 +342,18 @@ def main():
     args = parse_args()
     dataname = args.dataname
     target = args.target
+    input_type = args.input_type
     modeltype = args.modeltype
 
     config = Config
     config.dataset = dataname
-    config.target = 'all'
+    config.target = target
     config.device = 'cuda:0'
-    config.batch_size = 64
     
-    
-    ######3DMODEL
-    config.model3d.model=modeltype
-    config.model3d.augmentation = True
+    #config.max_num_conformers = 20
+    config.model1d.input_type = input_type
+    config.model1d.model = modeltype
+
 
     config_dict = config_to_dict(config)
     subkeys = ["dataset",
@@ -415,31 +362,28 @@ def main():
                "train_ratio",
                "valid_ratio",
                "seed",
-               "model3d", #.augmentation"
+               "model1d", #.augmentation"
                "batch_size"]
     config_dict_datamodule = {}
     for k,v in config_dict.items():
         if k in subkeys:
-            if k=="model3d":
-                config_dict_datamodule[f'{k}_augmentation']=config_dict[k].augmentation
+            if k=="model1d":
+                config_dict_datamodule[f'{k}_input_type']=config_dict[k].input_type
             else:
                 config_dict_datamodule[k]=v
 
-    data = DataModule(config_dict_datamodule, multitask = True)
+    data = DataModule(config_dict_datamodule)
     data.prepare_data()
     data.split_compute()
 
-    model = ModelLM(max_atomic_num=data.max_atomic_num, 
-                whole_dataset = data.dataset, 
-                unique_variables=data.unique_variables, 
-                multitask = True, **config_dict)
-    
+    model = Model1D(vocab_size=data.vocab_size, tokenizer=data.tokenizer, smiles_ids=data.smiles_ids, **config_dict)
+
     print(f'#PARAMS = {sum(p.numel() for p in model.parameters() if p.requires_grad)}')
     
-    dir_name = f"log_multitask_{dataname}_{target}_{modeltype}_v0"
+    dir_name = f"log_1D_{dataname}_{target}_{modeltype}_{input_type}_v0"
 
     dir_load_model = None
-    log_dir_folder = '/mnt/artifacts/out_logs/'
+    log_dir_folder = '/mnt/code/logs/'
     log_dir_folder = os.path.join(log_dir_folder, dir_name)
     if os.path.exists(log_dir_folder):
         if os.path.exists(os.path.join(log_dir_folder, "last.ckpt")):
@@ -512,19 +456,11 @@ def main():
     )
 
     test_trainer.test(model=model, ckpt_path=checkpoint_path, datamodule=data)
-    perf_dict = {'token': model.inference_results['token'].cpu().numpy(),
-                 'y_true': model.inference_results['y_true'].cpu().numpy(), 
+    perf_dict = {'y_true': model.inference_results['y_true'].cpu().numpy(), 
                  'y_pred': model.inference_results['y_pred'].cpu().numpy()}
     r2test = r2_score(perf_dict['y_true'], perf_dict['y_pred'])
-    res_df = pd.DataFrame(perf_dict)
-    r2_str = ''
-    for i,lab in zip(list(res_df['token'].unique()), data.dataset.descriptors):
-        r2test_i = r2_score(res_df[res_df['token']==i]['y_true'], 
-                            res_df[res_df['token']==i]['y_pred'])
-        print(f'{lab} R2 = {str(r2test_i)[:4]}')
-        r2_str+= f'_{lab}_{str(r2test_i)[:4]}'
     #mae_test = mean_absolute_error(perf_dict['y_true'], perf_dict['y_pred'])
-    pd.DataFrame(perf_dict).to_csv(log_dir_folder+f'/test_pred_ba_chi_{str(r2test)[:4]}_{r2_str}.csv')
+    pd.DataFrame(perf_dict).to_csv(log_dir_folder+f'/test_pred_r2_{str(r2test)[:4]}.csv')
     print(f"R2 = {str(r2test)[:4]}")
     perf_dict=[]
     torch.cuda.empty_cache()
@@ -536,46 +472,28 @@ if __name__ == '__main__':
     install_torch('torch-sparse')
     install_torch('torch-cluster')
     install_torch('torch-geometric')
-    install('ase')
+    install('transformers')
 
-    from torch.nn.utils import clip_grad_norm_
-# from pl_bolts.optimizers import LinearWarmupCosineAnnealingLR
-
-    from torch.utils.tensorboard import SummaryWriter
-    from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
+    
+    from transformers import RobertaTokenizer
+    #from pl_bolts.optimizers import LinearWarmupCosineAnnealingLR
     
     from config import Config
     from data.ee import EE
     from data.bde import BDE
     from data.drugs import Drugs
     from data.kraken import Kraken
-    from data.tmqmg import tmQMg
     from happy_config import ConfigLoader
-    from loaders.samplers import EnsembleSampler, EnsembleMultiBatchSampler
-    from loaders.multibatch import MultiBatchLoader
     from utils.early_stopping import EarlyStopping, generate_checkpoint_filename
     
-    from models.model_3d import Model3D
-    from models.models_3d.chiro import ChIRo
-    from models.models_3d.painn import PaiNN
-    from models.models_3d.schnet import SchNet
-    from models.models_3d.gemnet import GemNetT
-    from models.models_3d.dimenet import DimeNet, DimeNetPlusPlus
-    from models.models_3d.clofnet import ClofNet
-    from models.models_3d.leftnet import LEFTNet
-    from models.models_3d.chytorch_discrete import ChytorchDiscrete
-    #from models.models_3d.chytorch_conformer import ChytorchConformer
-    
-    import pickle
+    from models.model_1d import LSTM, Transformer
+    from models.models_1d.utils import construct_fingerprint, construct_smiles, concatenate_smiles
+    #from train_1d import *
     from time import time
     from pytorch_lightning.callbacks import ModelCheckpoint
     from pytorch_lightning.callbacks import EarlyStopping
     from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
     import pytorch_lightning as pl
-    
-    from torch.optim import AdamW
-    from torch.optim.lr_scheduler import CyclicLR, CosineAnnealingLR
-    from torch_geometric.loader import DataLoader
 
 
     main()

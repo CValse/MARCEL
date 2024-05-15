@@ -1,0 +1,35 @@
+#!/bin/bash
+
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname BDE --target BindingEnergy --modeltype LSTM --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname BDE --target BindingEnergy --modeltype LSTM --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname BDE --target BindingEnergy --modeltype Transformer --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target ip --modeltype LSTM --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target ip --modeltype Transformer --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target ea --modeltype LSTM --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target ea --modeltype Transformer --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target chi --modeltype LSTM --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target chi --modeltype Transformer --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_B5 --modeltype LSTM --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_B5 --modeltype Transformer --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_L --modeltype LSTM --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_L --modeltype Transformer --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_burB5 --modeltype LSTM --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_burB5 --modeltype Transformer --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_burL --modeltype LSTM --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_burL --modeltype Transformer --input_type SMILES
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname BDE --target BindingEnergy --modeltype LSTM --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname BDE --target BindingEnergy --modeltype Transformer --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target ip --modeltype LSTM --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target ip --modeltype Transformer --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target ea --modeltype LSTM --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target ea --modeltype Transformer --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target chi --modeltype LSTM --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Drugs --target chi --modeltype Transformer --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_B5 --modeltype LSTM --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_B5 --modeltype Transformer --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_L --modeltype LSTM --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_L --modeltype Transformer --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_burB5 --modeltype LSTM --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_burB5 --modeltype Transformer --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_burL --modeltype LSTM --input_type Fingerprint
+python3 /mnt/code/benchmarks/main1d_singletask.py --dataname Kraken --target sterimol_burL --modeltype Transformer --input_type Fingerprint
